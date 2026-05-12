@@ -227,8 +227,10 @@ function timeToMinutes(t: string): number {
 }
 
 // 1回のフェッチで日付行全体を読み、予約状況＋バッファ＋グレーセルブロックを返す
+// excludeSlot: 予約変更時に変更元スロットのバッファを除外する
 export async function getSlotStatusForDate(
-  dateStr: string
+  dateStr: string,
+  excludeSlot?: string
 ): Promise<{ slot: string; booked: string | null }[]> {
   const sheets = await getSheetsClient()
   const colMap = await getColumnMap()
@@ -254,10 +256,11 @@ export async function getSlotStatusForDate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellCyan = (colIdx: number): boolean => isCyanBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
 
-  // テキストありセルのバッファ計算（グレーセルは除外）
+  // テキストありセルのバッファ計算（グレーセルは除外、変更元スロットも除外）
   const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
+    if (header === excludeSlot) return // 変更元スロットのバッファは無視
     const idx = colIdx as number
     const val = getCellValue(idx)
     if (!val) return
@@ -284,7 +287,7 @@ export async function getSlotStatusForDate(
     const colIdx = colMap[slot]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
 
-    // 1. 予約あり
+    // 1. 予約あり（変更元スロット自身はそのまま booked として返す）
     if (cellValue) return { slot, booked: cellValue }
 
     // 2. セルそのものがグレー → 直接ブロック
@@ -292,8 +295,14 @@ export async function getSlotStatusForDate(
       return { slot, booked: '__blocked__' }
     }
 
-    // 3. バッファチェック（面談予約=30分、外部予定=45分）
     const slotMins = timeToMinutes(slot)
+
+    // 3. 後方バッファチェック（この枠から始まる予定が次のエントリーに被る場合も不可）
+    //    例: 15:30に予定があれば 15:15 は不可（15:15+30分=15:45 > 15:30）
+    const conflictsAhead = occupied.some(({ mins: t }) => slotMins < t && t < slotMins + 30)
+    if (conflictsAhead) return { slot, booked: '__blocked__' }
+
+    // 4. 前方バッファチェック（面談予約=30分、外部予定=45分）
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
     if (isBlocked) return { slot, booked: '__blocked__' }
 

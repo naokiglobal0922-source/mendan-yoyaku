@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getSlotStatusForDate, writeBooking, cancelBooking } from '@/lib/google'
 import { sendLineNotification } from '@/lib/line'
 
-// GET /api/bookings?date=4/1  → その日の空き状況（45分バッファ込み）
+// GET /api/bookings?date=4/1&excludeSlot=15:00  → その日の空き状況
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get('date')
+  const excludeSlot = request.nextUrl.searchParams.get('excludeSlot') ?? undefined
   if (!date) return NextResponse.json({ error: 'date required' }, { status: 400 })
 
   try {
-    const slots = await getSlotStatusForDate(date)
+    const slots = await getSlotStatusForDate(date, excludeSlot)
     return NextResponse.json({ date, slots })
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })

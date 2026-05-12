@@ -89,12 +89,14 @@ export default function HomePage() {
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate)
 
-  const loadSlots = useCallback(async (date: Date) => {
+  const loadSlots = useCallback(async (date: Date, excludeSlot?: string) => {
     setLoadingSlots(true)
     setSlots([])
     const dateStr = formatDateForSheet(date)
     try {
-      const res = await fetch(`/api/bookings?date=${encodeURIComponent(dateStr)}`)
+      let url = `/api/bookings?date=${encodeURIComponent(dateStr)}`
+      if (excludeSlot) url += `&excludeSlot=${encodeURIComponent(excludeSlot)}`
+      const res = await fetch(url)
       const data = await res.json()
       setSlots(data.slots || [])
     } catch {
@@ -142,8 +144,9 @@ export default function HomePage() {
       setVerifyError('その名前の予約が見つかりませんでした。フルネームで入力してください')
       return
     }
-    setEditingOldSlot(found.slot)
-    setSelectedSlot(found.slot)
+    const oldSlot = found.slot
+    setEditingOldSlot(oldSlot)
+    setSelectedSlot(oldSlot)
     setStudentName(extractName(found.booked!))
     setMeetingType(extractType(found.booked!))
     setSelectedTopics([])
@@ -151,6 +154,8 @@ export default function HomePage() {
     setChatNote('')
     setVerifyError('')
     setFormMode('edit')
+    // 変更元スロットのバッファを除外して再読み込み
+    if (selectedDate) loadSlots(selectedDate, oldSlot)
   }
 
   const handleSubmitNew = async () => {
@@ -437,15 +442,25 @@ export default function HomePage() {
                 <label className="block text-xs font-semibold text-gray-500 mb-2">
                   話したいこと <span className="font-normal text-gray-400">（当てはまるものを選択）</span>
                 </label>
-                <div className="space-y-2">
-                  {TOPICS.map(topic => (
-                    <label key={topic} className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={selectedTopics.includes(topic)}
-                        onChange={() => toggleTopic(topic)}
-                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0" />
-                      <span className="text-sm text-gray-700">{topic}</span>
-                    </label>
-                  ))}
+                <div className="space-y-1">
+                  {TOPICS.map(topic => {
+                    const checked = selectedTopics.includes(topic)
+                    return (
+                      <button key={topic} type="button" onClick={() => toggleTopic(topic)}
+                        className="flex items-center gap-3 w-full text-left py-1.5 active:opacity-60">
+                        <span className={`w-5 h-5 flex-shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
+                          checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
+                        }`}>
+                          {checked && (
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M1 4L3.5 7L9 1" />
+                            </svg>
+                          )}
+                        </span>
+                        <span className="text-sm text-gray-700">{topic}</span>
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
 
