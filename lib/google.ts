@@ -117,6 +117,67 @@ export const BOOKABLE_SLOTS = [
   '16:00', '16:15', '16:30', '22:15'
 ]
 
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number)
+  return h * 60 + m
+}
+
+// 1回のフェッチで日付行全体を読み、予約状況＋45分バッファブロックを返す
+export async function getSlotStatusForDate(
+  dateStr: string
+): Promise<{ slot: string; booked: string | null }[]> {
+  const sheets = await getSheetsClient()
+  const colMap = await getColumnMap()
+  const rowIndex = await findDateRow(dateStr)
+
+  if (rowIndex < 0) {
+    return BOOKABLE_SLOTS.map(slot => ({ slot, booked: null }))
+  }
+
+  // 行全体を一括取得
+  const lastCol = colIndexToLetter(Object.keys(colMap).length + 2)
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `2026!A${rowIndex + 1}:${lastCol}${rowIndex + 1}`,
+  })
+  const row = (res.data.values || [[]])[0] || []
+
+  // 時間ヘッダーを持つ列で値が入っているものをリストアップ（45分バッファ判定用）
+  const occupiedMins: number[] = []
+  Object.entries(colMap).forEach(([header, colIdx]) => {
+    if (header.includes(':') && row[colIdx as number]) {
+      occupiedMins.push(timeToMinutes(header))
+    }
+  })
+
+  return BOOKABLE_SLOTS.map(slot => {
+    const { headerKey, isHalf } = getSheetSlotKey(slot)
+    const colIdx = colMap[headerKey]
+    const cellValue: string = colIdx !== undefined ? (row[colIdx] || '') : ''
+
+    // 公式予約（このアプリで入れた枠）かどうか確認
+    let booked: string | null = null
+    if (cellValue) {
+      if (isHalf) {
+        if (cellValue.includes(`${slot}:`)) {
+          const part = cellValue.split(' / ').find((p: string) => p.startsWith(`${slot}:`))
+          booked = part ? part.replace(`${slot}:`, '') : null
+        }
+      } else {
+        booked = cellValue
+      }
+    }
+    if (booked) return { slot, booked }
+
+    // 他の予定（アプリ外の書き込み）による45分バッファチェック
+    const slotMins = timeToMinutes(slot)
+    const isBlocked = occupiedMins.some(t => t <= slotMins && slotMins < t + 45)
+    if (isBlocked) return { slot, booked: '__blocked__' }
+
+    return { slot, booked: null }
+  })
+}
+
 // 「2026」シートのヘッダー行を読み取り、列インデックスマップを作成
 async function getColumnMap(): Promise<Record<string, number>> {
   const sheets = await getSheetsClient()

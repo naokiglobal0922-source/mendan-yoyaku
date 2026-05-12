@@ -281,7 +281,7 @@ export default function HomePage() {
               <>
                 <div className="grid grid-cols-4 gap-2 mb-4">
                   {slots.map(({ slot, booked }) => {
-                    const isMoveDest = formMode === 'edit' && !booked && slot !== editingOldSlot
+                    const isMoveDest = formMode === 'edit' && !booked && booked !== '__blocked__' && slot !== editingOldSlot
                     const isCurrentEdit = formMode === 'edit' && slot === editingOldSlot
                     const isNewSelected = formMode === 'new' && selectedSlot === slot
                     const isMoveSelected = formMode === 'edit' && selectedSlot === slot && slot !== editingOldSlot
@@ -291,7 +291,7 @@ export default function HomePage() {
                         disabled={!!booked && formMode !== 'edit'}
                         onClick={() => {
                           if (formMode === 'edit' && !booked) {
-                            setSelectedSlot(slot) // 移動先を変更
+                            setSelectedSlot(slot)
                           } else if (!booked && formMode !== 'edit') {
                             setFormMode('new')
                             setSelectedSlot(s => s === slot ? null : slot)
@@ -299,7 +299,9 @@ export default function HomePage() {
                           }
                         }}
                         className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                          booked
+                          booked === '__blocked__'
+                            ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                            : booked
                             ? isCurrentEdit
                               ? 'bg-orange-400 text-white ring-2 ring-orange-300'
                               : 'bg-red-100 text-red-600 cursor-default'
@@ -312,10 +314,10 @@ export default function HomePage() {
                               : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
                         }`}>
                         {slot}
-                        {booked ? (
-                          <span className="block text-[9px] mt-0.5 text-red-400">
-                            予約済み
-                          </span>
+                        {booked === '__blocked__' ? (
+                          <span className="block text-[9px] mt-0.5 text-gray-400">予約不可</span>
+                        ) : booked ? (
+                          <span className="block text-[9px] mt-0.5 text-red-400">予約済み</span>
                         ) : isMoveDest ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
                         ) : null}
