@@ -361,10 +361,6 @@ function colIndexToLetter(index: number): string {
 }
 
 // 予約を書き込む
-// 15分刻み列に変更済み：各スロットが直接1列に対応
-function getSheetSlotKey(slot: string): { headerKey: string; isHalf: boolean } {
-  return { headerKey: slot, isHalf: false }
-}
 
 // セルに赤背景を設定する
 async function setCellBackground(
