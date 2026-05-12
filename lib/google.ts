@@ -75,46 +75,64 @@ export async function updateInterviewRecord(name: string, date: string): Promise
   })
 }
 
-// 面談不可日の取得（「設定」シートA列）
+// セルの背景色がグレー系かどうか判定
+function isGreyBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  const r = color.red ?? 1
+  const g = color.green ?? 1
+  const b = color.blue ?? 1
+  // 白（デフォルト）は除外
+  if (r > 0.88 && g > 0.88 && b > 0.88) return false
+  // 彩度が低い（R≒G≒B）= グレー系
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  return max - min < 0.15
+}
+
+// 面談不可日の取得：「2026」シートのA列でグレー背景のセルを不可日として検出
 export async function getBlockedDates(): Promise<string[]> {
   try {
     const sheets = await getSheetsClient()
-    const res = await sheets.spreadsheets.values.get({
+    const res = await sheets.spreadsheets.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: '設定!A:A',
+      ranges: ['2026!A:A'],
+      includeGridData: true,
     })
-    const rows = res.data.values || []
-    return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0)
+    const rowData = res.data.sheets?.[0]?.data?.[0]?.rowData || []
+    const blocked: string[] = []
+    let currentMonth = 0
+
+    rowData.forEach((row, i) => {
+      if (i === 0) return // ヘッダー行スキップ
+      const cell = row.values?.[0]
+      if (!cell) return
+      const cellValue = (cell.formattedValue || '').trim()
+      if (!cellValue) return
+
+      // 月を追跡（"4/1" 形式の行で更新）
+      if (cellValue.includes('/')) {
+        const [m] = cellValue.split('/').map(Number)
+        currentMonth = m
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (!isGreyBackground(cell.effectiveFormat?.backgroundColor as any)) return
+
+      // グレーなら不可日として追加
+      if (cellValue.includes('/')) {
+        blocked.push(cellValue)
+      } else {
+        const d = Number(cellValue)
+        if (!isNaN(d) && currentMonth > 0) {
+          blocked.push(`${currentMonth}/${d}`)
+        }
+      }
+    })
+
+    return blocked
   } catch {
     return []
   }
-}
-
-// 面談不可日を追加
-export async function addBlockedDate(date: string): Promise<void> {
-  const sheets = await getSheetsClient()
-  await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
-    range: '設定!A:A',
-    valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [[date]] },
-  })
-}
-
-// 面談不可日を削除
-export async function removeBlockedDate(date: string): Promise<void> {
-  const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: '設定!A:A',
-  })
-  const rows = res.data.values || []
-  const rowIndex = rows.findIndex(r => r[0] === date)
-  if (rowIndex < 0) return
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `設定!A${rowIndex + 1}`,
-  })
 }
 
 // 「2026」シートの予約状況を取得
@@ -164,7 +182,7 @@ function timeToMinutes(t: string): number {
   return h * 60 + m
 }
 
-// 1回のフェッチで日付行全体を読み、予約状況＋45分バッファブロックを返す
+// 1回のフェッチで日付行全体を読み、予約状況＋バッファ＋グレーセルブロックを返す
 export async function getSlotStatusForDate(
   dateStr: string
 ): Promise<{ slot: string; booked: string | null }[]> {
@@ -176,20 +194,26 @@ export async function getSlotStatusForDate(
     return BOOKABLE_SLOTS.map(slot => ({ slot, booked: null }))
   }
 
-  // 行全体を一括取得
+  // 値＋書式を一括取得
   const lastCol = colIndexToLetter(Object.keys(colMap).length + 2)
-  const res = await sheets.spreadsheets.values.get({
+  const res = await sheets.spreadsheets.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `2026!A${rowIndex + 1}:${lastCol}${rowIndex + 1}`,
+    ranges: [`2026!A${rowIndex + 1}:${lastCol}${rowIndex + 1}`],
+    includeGridData: true,
   })
-  const row = (res.data.values || [[]])[0] || []
+  const cells = res.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || []
 
-  // 時間ヘッダーを持つ列で値が入っているものをリストアップ
-  // 面談予約（アプリ経由）は30分バッファ、外部予定は45分バッファ
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getCellValue = (colIdx: number): string => (cells[colIdx] as any)?.formattedValue || ''
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellGrey = (colIdx: number): boolean => isGreyBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+
+  // 時間ヘッダー列の状況（バッファ計算用）
   const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
-    const val: string = row[colIdx as number] || ''
-    if (!header.includes(':') || !val) return
+    if (!header.includes(':')) return
+    const val = getCellValue(colIdx as number)
+    if (!val) return
     const isAppBooking = /（(2者面談|3者面談)）/.test(val)
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
@@ -197,9 +221,9 @@ export async function getSlotStatusForDate(
   return BOOKABLE_SLOTS.map(slot => {
     const { headerKey, isHalf } = getSheetSlotKey(slot)
     const colIdx = colMap[headerKey]
-    const cellValue: string = colIdx !== undefined ? (row[colIdx] || '') : ''
+    const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
 
-    // 公式予約（このアプリで入れた枠）かどうか確認
+    // 1. アプリ経由の予約
     let booked: string | null = null
     if (cellValue) {
       if (isHalf) {
@@ -213,7 +237,12 @@ export async function getSlotStatusForDate(
     }
     if (booked) return { slot, booked }
 
-    // バッファチェック（面談予約=30分、外部予定=45分）
+    // 2. セルそのものがグレー → 直接ブロック
+    if (colIdx !== undefined && isCellGrey(colIdx)) {
+      return { slot, booked: '__blocked__' }
+    }
+
+    // 3. バッファチェック（面談予約=30分、外部予定=45分）
     const slotMins = timeToMinutes(slot)
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
     if (isBlocked) return { slot, booked: '__blocked__' }
