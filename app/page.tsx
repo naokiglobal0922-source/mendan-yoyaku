@@ -313,8 +313,8 @@ export default function HomePage() {
                         }`}>
                         {slot}
                         {booked ? (
-                          <span className="block text-[9px] mt-0.5 truncate px-1">
-                            {extractName(booked)}
+                          <span className="block text-[9px] mt-0.5 text-red-400">
+                            予約済み
                           </span>
                         ) : isMoveDest ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
