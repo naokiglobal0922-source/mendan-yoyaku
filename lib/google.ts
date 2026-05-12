@@ -133,6 +133,7 @@ async function getColumnMap(): Promise<Record<string, number>> {
 }
 
 // 日付文字列から行インデックスを探す（A列）
+// スプシのA列は "4/1" → "2" → "3"... と月初だけ "月/日"、以降は日だけになっている
 async function findDateRow(dateStr: string): Promise<number> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
@@ -140,7 +141,27 @@ async function findDateRow(dateStr: string): Promise<number> {
     range: '2026!A:A',
   })
   const rows = res.data.values || []
-  return rows.findIndex(r => r[0] === dateStr)
+
+  // dateStr は "5/12" 形式
+  const [targetMonth, targetDay] = dateStr.split('/').map(Number)
+
+  let currentMonth = 0
+  for (let i = 0; i < rows.length; i++) {
+    const cell = (rows[i]?.[0] ?? '').toString().trim()
+    if (!cell) continue
+
+    if (cell.includes('/')) {
+      // "4/1" 形式 → 月を更新
+      const [m, d] = cell.split('/').map(Number)
+      currentMonth = m
+      if (m === targetMonth && d === targetDay) return i
+    } else {
+      // "2" "3"... 形式 → 現在の月で判定
+      const d = Number(cell)
+      if (!isNaN(d) && currentMonth === targetMonth && d === targetDay) return i
+    }
+  }
+  return -1
 }
 
 // 列番号をA1記法に変換
