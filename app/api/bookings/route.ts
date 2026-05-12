@@ -55,7 +55,7 @@ export async function PUT(request: NextRequest) {
     }
 
     if (oldSlot !== newSlot) {
-      const slots = await getSlotStatusForDate(date)
+      const slots = await getSlotStatusForDate(date, oldSlot)
       const target = slots.find(s => s.slot === newSlot)
       if (target?.booked) {
         return NextResponse.json({ error: '変更先の枠は予約できません' }, { status: 409 })
