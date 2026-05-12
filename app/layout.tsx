@@ -2,8 +2,8 @@ import type { Metadata, Viewport } from "next"
 import "./globals.css"
 
 export const metadata: Metadata = {
-  title: "面談予約",
-  description: "塾の面談予約システム",
+  title: "EIMEI予備校面談予約アプリ",
+  description: "EIMEI予備校の面談予約システム",
 }
 
 export const viewport: Viewport = {
