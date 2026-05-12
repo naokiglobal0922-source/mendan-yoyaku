@@ -144,7 +144,7 @@ export async function getBlockedDates(): Promise<string[]> {
   }
 }
 
-// 「2026」シートの予約状況を取得
+// 「2026」シートの予約状況を取得（月コンテキストを追跡して完全日付を返す）
 export async function getBookings(): Promise<{
   date: string
   dayOfWeek: string
@@ -153,31 +153,66 @@ export async function getBookings(): Promise<{
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: '2026!A:Z',
+    range: '2026!A:AM',
   })
   const rows = res.data.values || []
   if (rows.length === 0) return []
 
-  const headers = rows[0] // A=日付, B=曜日, C以降=時間帯
+  const headers = rows[0]
   const result = []
+  let currentMonth = 0
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i]
     if (!row || !row[0]) continue
+    const rawDate = row[0].toString().trim()
+
+    let dateStr = rawDate
+    if (rawDate.includes('/')) {
+      const [m] = rawDate.split('/').map(Number)
+      currentMonth = m
+    } else {
+      const d = Number(rawDate)
+      if (!isNaN(d) && currentMonth > 0) dateStr = `${currentMonth}/${d}`
+    }
+
     const slots: Record<string, string> = {}
     for (let j = 2; j < headers.length; j++) {
       const timeHeader = headers[j]
-      if (timeHeader && row[j]) {
-        slots[timeHeader] = row[j]
-      }
+      if (timeHeader && row[j]) slots[timeHeader] = row[j]
     }
-    result.push({
-      date: row[0],
-      dayOfWeek: row[1] || '',
-      slots,
-    })
+    result.push({ date: dateStr, dayOfWeek: row[1] || '', slots })
   }
   return result
+}
+
+// 名前で予約を検索（保護者向け確認用）
+export async function findBookingsByName(name: string): Promise<{
+  date: string
+  dayOfWeek: string
+  slot: string
+  type: string
+}[]> {
+  const bookings = await getBookings()
+  const results: { date: string; dayOfWeek: string; slot: string; type: string }[] = []
+
+  for (const { date, dayOfWeek, slots } of bookings) {
+    for (const [slot, cellValue] of Object.entries(slots)) {
+      const m = cellValue.match(/^(.+?)（(.+?)）$/)
+      if (m && m[1] === name) {
+        results.push({ date, dayOfWeek, slot, type: m[2] })
+      }
+    }
+  }
+
+  results.sort((a, b) => {
+    const [am, ad] = a.date.split('/').map(Number)
+    const [bm, bd] = b.date.split('/').map(Number)
+    const dc = (am * 100 + ad) - (bm * 100 + bd)
+    return dc !== 0 ? dc : a.slot.localeCompare(b.slot)
+  })
+
+  return results
 }
 
 // 予約可能時間枠の定義
@@ -231,18 +266,14 @@ export async function getSlotStatusForDate(
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
 
-  // シアン背景＋テキストなしの列から追加スロットを検出
+  // シアン背景＋テキストなしの列から追加スロットを検出（15分刻み：1列＝1スロット）
   const extraSlots: string[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
     const idx = colIdx as number
-    if (getCellValue(idx)) return // テキストありは対象外
+    if (getCellValue(idx)) return
     if (!isCellCyan(idx)) return
-    const [h, m] = header.split(':').map(Number)
-    const slot1 = header
-    const slot2 = m === 0 ? `${h}:15` : `${h}:45`
-    if (!BOOKABLE_SLOTS.includes(slot1)) extraSlots.push(slot1)
-    if (!BOOKABLE_SLOTS.includes(slot2)) extraSlots.push(slot2)
+    if (!BOOKABLE_SLOTS.includes(header)) extraSlots.push(header)
   })
 
   const allSlots = [...BOOKABLE_SLOTS, ...extraSlots]
@@ -250,23 +281,11 @@ export async function getSlotStatusForDate(
     .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
 
   return allSlots.map(slot => {
-    const { headerKey, isHalf } = getSheetSlotKey(slot)
-    const colIdx = colMap[headerKey]
+    const colIdx = colMap[slot]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
 
-    // 1. アプリ経由の予約
-    let booked: string | null = null
-    if (cellValue) {
-      if (isHalf) {
-        if (cellValue.includes(`${slot}:`)) {
-          const part = cellValue.split(' / ').find((p: string) => p.startsWith(`${slot}:`))
-          booked = part ? part.replace(`${slot}:`, '') : null
-        }
-      } else {
-        booked = cellValue
-      }
-    }
-    if (booked) return { slot, booked }
+    // 1. 予約あり
+    if (cellValue) return { slot, booked: cellValue }
 
     // 2. セルそのものがグレー → 直接ブロック
     if (colIdx !== undefined && isCellGrey(colIdx)) {
@@ -342,11 +361,8 @@ function colIndexToLetter(index: number): string {
 }
 
 // 予約を書き込む
-// :15 → 親列は :00、:45 → 親列は :30、それ以外は直接列
+// 15分刻み列に変更済み：各スロットが直接1列に対応
 function getSheetSlotKey(slot: string): { headerKey: string; isHalf: boolean } {
-  const [h, m] = slot.split(':').map(Number)
-  if (m === 15) return { headerKey: `${h}:00`, isHalf: true }
-  if (m === 45) return { headerKey: `${h}:30`, isHalf: true }
   return { headerKey: slot, isHalf: false }
 }
 
@@ -396,36 +412,16 @@ export async function writeBooking(
   const rowIndex = await findDateRow(dateStr)
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
-  const { headerKey, isHalf } = getSheetSlotKey(slot)
-  const colIndex = colMap[headerKey]
-  if (colIndex === undefined) throw new Error(`列 ${headerKey} が見つかりません`)
+  const colIndex = colMap[slot]
+  if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
-  const cellRef = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
-  const cellValue = `${studentName}（${meetingType}）`
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[`${studentName}（${meetingType}）`]] },
+  })
 
-  if (isHalf) {
-    const existing = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-    })
-    const current = ((existing.data.values || [[]])[0] || [])[0] || ''
-    const newVal = current ? `${current} / ${slot}:${cellValue}` : `${slot}:${cellValue}`
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[newVal]] },
-    })
-  } else {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[cellValue]] },
-    })
-  }
-
-  // 赤背景を設定
   const sheetId = await getSheetId('2026')
   await setCellBackground(sheets, sheetId, rowIndex, colIndex)
 }
@@ -464,43 +460,17 @@ export async function cancelBooking(dateStr: string, slot: string): Promise<void
   const rowIndex = await findDateRow(dateStr)
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
-  const { headerKey, isHalf } = getSheetSlotKey(slot)
-  const colIndex = colMap[headerKey]
-  if (colIndex === undefined) throw new Error(`列 ${headerKey} が見つかりません`)
+  const colIndex = colMap[slot]
+  if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
-  const cellRef = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
-
-  if (isHalf) {
-    const existing = await sheets.spreadsheets.values.get({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-    })
-    const current = ((existing.data.values || [[]])[0] || [])[0] || ''
-    const newVal = current
-      .split(' / ')
-      .filter((p: string) => !p.startsWith(`${slot}:`))
-      .join(' / ')
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[newVal]] },
-    })
-    // 残りの予約がなければ背景もリセット
-    if (!newVal) {
-      const sheetId = await getSheetId('2026')
-      await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
-    }
-  } else {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: SPREADSHEET_ID,
-      range: cellRef,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [['']] },
-    })
-    const sheetId = await getSheetId('2026')
-    await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
-  }
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [['']] },
+  })
+  const sheetId = await getSheetId('2026')
+  await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
 }
 
 // 特定の日付・時間枠の予約状況を確認
@@ -510,25 +480,12 @@ export async function isSlotBooked(dateStr: string, slot: string): Promise<strin
   const rowIndex = await findDateRow(dateStr)
   if (rowIndex < 0) return null
 
-  const { headerKey, isHalf } = getSheetSlotKey(slot)
-  const colIndex = colMap[headerKey]
+  const colIndex = colMap[slot]
   if (colIndex === undefined) return null
 
-  const cellRef = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: cellRef,
+    range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
   })
-  const val = ((res.data.values || [[]])[0] || [])[0] || ''
-  if (!val) return null
-
-  if (isHalf) {
-    // "slot:name" 形式を確認
-    if (val.includes(`${slot}:`)) {
-      const part = val.split(' / ').find((p: string) => p.startsWith(`${slot}:`))
-      return part ? part.replace(`${slot}:`, '') : null
-    }
-    return null
-  }
-  return val || null
+  return ((res.data.values || [[]])[0] || [])[0] || null
 }

@@ -81,6 +81,10 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
 
+  const [checkName, setCheckName] = useState('')
+  const [checkResult, setCheckResult] = useState<{ date: string; dayOfWeek: string; slot: string; type: string }[] | null>(null)
+  const [checkLoading, setCheckLoading] = useState(false)
+
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate)
@@ -228,6 +232,22 @@ export default function HomePage() {
       }
     } catch { setResult({ ok: false, message: '通信エラーが発生しました' }) }
     finally { setSubmitting(false) }
+  }
+
+  const handleCheckBooking = async () => {
+    const name = checkName.trim()
+    if (!name) return
+    setCheckLoading(true)
+    setCheckResult(null)
+    try {
+      const res = await fetch(`/api/bookings/lookup?name=${encodeURIComponent(name)}`)
+      const data = await res.json()
+      setCheckResult(data.bookings || [])
+    } catch {
+      setCheckResult([])
+    } finally {
+      setCheckLoading(false)
+    }
   }
 
   return (
@@ -475,6 +495,43 @@ export default function HomePage() {
             </div>
           </section>
         ) : null}
+
+        {/* 予約確認 */}
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">予約確認</h2>
+          <p className="text-xs text-gray-400 mb-3">お子様のフルネームで予約内容を確認できます</p>
+          <div className="flex gap-2 mb-3">
+            <input
+              type="text"
+              value={checkName}
+              onChange={e => { setCheckName(e.target.value); setCheckResult(null) }}
+              onKeyDown={e => e.key === 'Enter' && handleCheckBooking()}
+              placeholder="例：山田 太郎"
+              className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+            />
+            <button
+              onClick={handleCheckBooking}
+              disabled={checkLoading || !checkName.trim()}
+              className="bg-gray-800 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
+            >
+              {checkLoading ? '...' : '確認'}
+            </button>
+          </div>
+          {checkResult !== null && (
+            checkResult.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-3">予約が見つかりませんでした</p>
+            ) : (
+              <div className="space-y-2">
+                {checkResult.map((b, i) => (
+                  <div key={i} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
+                    <p className="text-sm font-bold text-gray-900">{b.date}（{b.dayOfWeek}）{b.slot}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{b.type}</p>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </section>
       </main>
     </div>
   )
