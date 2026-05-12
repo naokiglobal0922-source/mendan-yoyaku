@@ -142,12 +142,14 @@ export async function getSlotStatusForDate(
   })
   const row = (res.data.values || [[]])[0] || []
 
-  // 時間ヘッダーを持つ列で値が入っているものをリストアップ（45分バッファ判定用）
-  const occupiedMins: number[] = []
+  // 時間ヘッダーを持つ列で値が入っているものをリストアップ
+  // 面談予約（アプリ経由）は30分バッファ、外部予定は45分バッファ
+  const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
-    if (header.includes(':') && row[colIdx as number]) {
-      occupiedMins.push(timeToMinutes(header))
-    }
+    const val: string = row[colIdx as number] || ''
+    if (!header.includes(':') || !val) return
+    const isAppBooking = /（(2者面談|3者面談)）/.test(val)
+    occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
 
   return BOOKABLE_SLOTS.map(slot => {
@@ -169,9 +171,9 @@ export async function getSlotStatusForDate(
     }
     if (booked) return { slot, booked }
 
-    // 他の予定（アプリ外の書き込み）による45分バッファチェック
+    // バッファチェック（面談予約=30分、外部予定=45分）
     const slotMins = timeToMinutes(slot)
-    const isBlocked = occupiedMins.some(t => t <= slotMins && slotMins < t + 45)
+    const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
     if (isBlocked) return { slot, booked: '__blocked__' }
 
     return { slot, booked: null }
