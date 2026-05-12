@@ -1,9 +1,22 @@
 "use client"
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
 const MEETING_TYPES = ['2者面談', '3者面談']
+
+const TOPICS = [
+  '成績・学力のこと',
+  '志望校・大学の選び方',
+  '受験勉強の進め方',
+  'モチベーション・やる気が上がらない',
+  '学習習慣が身についていない',
+  '部活と勉強の両立',
+  '学校生活・友人関係',
+  '模試の結果・偏差値について',
+  '塾の授業・カリキュラムについて',
+  '夏期・冬期講習について',
+]
 
 function getWeekDates(baseDate: Date): Date[] {
   const week: Date[] = []
@@ -38,22 +51,17 @@ export default function HomePage() {
   const [slots, setSlots] = useState<SlotStatus[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
-  const [students, setStudents] = useState<string[]>([])
   const [studentName, setStudentName] = useState('')
   const [meetingType, setMeetingType] = useState(MEETING_TYPES[0])
+  const [selectedTopics, setSelectedTopics] = useState<string[]>([])
   const [note, setNote] = useState('')
+  const [chatNote, setChatNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate)
-
-  useEffect(() => {
-    fetch('/api/students')
-      .then(r => r.json())
-      .then(d => setStudents(d.students || []))
-  }, [])
 
   const loadSlots = useCallback(async (date: Date) => {
     setLoadingSlots(true)
@@ -77,10 +85,23 @@ export default function HomePage() {
     loadSlots(date)
   }
 
+  const toggleTopic = (topic: string) => {
+    setSelectedTopics(prev =>
+      prev.includes(topic) ? prev.filter(t => t !== topic) : [...prev, topic]
+    )
+  }
+
   const handleSubmit = async () => {
     if (!selectedDate || !selectedSlot || !studentName) return
     setSubmitting(true)
     setResult(null)
+
+    const noteText = [
+      selectedTopics.length ? `【話したいこと】${selectedTopics.join('、')}` : '',
+      note ? `【備考】${note}` : '',
+      chatNote ? `【雑談】${chatNote}` : '',
+    ].filter(Boolean).join('\n')
+
     try {
       const res = await fetch('/api/bookings', {
         method: 'POST',
@@ -90,7 +111,7 @@ export default function HomePage() {
           slot: selectedSlot,
           studentName,
           type: meetingType,
-          note,
+          note: noteText,
         }),
       })
       const data = await res.json()
@@ -98,7 +119,9 @@ export default function HomePage() {
         setResult({ ok: true, message: '予約が完了しました！' })
         setSelectedSlot(null)
         setStudentName('')
+        setSelectedTopics([])
         setNote('')
+        setChatNote('')
         loadSlots(selectedDate)
       } else {
         setResult({ ok: false, message: data.error || '予約に失敗しました' })
@@ -209,23 +232,22 @@ export default function HomePage() {
               予約内容の入力 — {formatDateDisplay(selectedDate!)} {selectedSlot}
             </h2>
 
-            <div className="space-y-4">
+            <div className="space-y-5">
+              {/* 生徒名（記述） */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">生徒名 *</label>
-                <select
+                <input
+                  type="text"
                   value={studentName}
                   onChange={e => setStudentName(e.target.value)}
+                  placeholder="お子様のお名前を入力してください"
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
-                >
-                  <option value="">選択してください</option>
-                  {students.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
+                />
               </div>
 
+              {/* 面談希望 */}
               <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談種別 *</label>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談希望 *</label>
                 <div className="flex gap-2">
                   {MEETING_TYPES.map(t => (
                     <button
@@ -243,13 +265,48 @@ export default function HomePage() {
                 </div>
               </div>
 
+              {/* 話したいこと（選択式） */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-2">
+                  話したいこと <span className="font-normal text-gray-400">（当てはまるものを選択）</span>
+                </label>
+                <div className="space-y-2">
+                  {TOPICS.map(topic => (
+                    <label key={topic} className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedTopics.includes(topic)}
+                        onChange={() => toggleTopic(topic)}
+                        className="w-4 h-4 rounded accent-blue-600 flex-shrink-0"
+                      />
+                      <span className="text-sm text-gray-700">{topic}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* 備考 */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">備考（任意）</label>
                 <textarea
                   value={note}
                   onChange={e => setNote(e.target.value)}
                   rows={3}
-                  placeholder="気になること・相談したいことなど"
+                  placeholder="具体的な状況や詳細があればご記入ください"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none"
+                />
+              </div>
+
+              {/* 雑談 */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                  雑談・なんでもどうぞ <span className="font-normal text-gray-400">（任意）</span>
+                </label>
+                <textarea
+                  value={chatNote}
+                  onChange={e => setChatNote(e.target.value)}
+                  rows={3}
+                  placeholder="悩みでも、ちょっとした疑問でも、気軽にどうぞ"
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none"
                 />
               </div>
