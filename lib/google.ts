@@ -199,10 +199,46 @@ function getSheetSlotKey(slot: string): { headerKey: string; isHalf: boolean } {
   return { headerKey: slot, isHalf: false }
 }
 
+// セルに赤背景を設定する
+async function setCellBackground(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  sheetId: number,
+  rowIndex: number,
+  colIndex: number
+): Promise<void> {
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      requests: [{
+        updateCells: {
+          rows: [{
+            values: [{
+              userEnteredFormat: {
+                backgroundColor: { red: 1, green: 0.4, blue: 0.4 },
+              },
+            }],
+          }],
+          fields: 'userEnteredFormat.backgroundColor',
+          start: { sheetId, rowIndex, columnIndex: colIndex },
+        },
+      }],
+    },
+  })
+}
+
+// シートIDを取得
+async function getSheetId(sheetName: string): Promise<number> {
+  const sheets = await getSheetsClient()
+  const res = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID })
+  const sheet = res.data.sheets?.find(s => s.properties?.title === sheetName)
+  return sheet?.properties?.sheetId ?? 0
+}
+
 export async function writeBooking(
   dateStr: string,
   slot: string,
-  studentName: string
+  studentName: string,
+  meetingType: string
 ): Promise<void> {
   const sheets = await getSheetsClient()
   const colMap = await getColumnMap()
@@ -214,15 +250,15 @@ export async function writeBooking(
   if (colIndex === undefined) throw new Error(`列 ${headerKey} が見つかりません`)
 
   const cellRef = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
+  const cellValue = `${studentName}（${meetingType}）`
 
   if (isHalf) {
-    // 既存値を取得して追記
     const existing = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
       range: cellRef,
     })
     const current = ((existing.data.values || [[]])[0] || [])[0] || ''
-    const newVal = current ? `${current} / ${slot}:${studentName}` : `${slot}:${studentName}`
+    const newVal = current ? `${current} / ${slot}:${cellValue}` : `${slot}:${cellValue}`
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
       range: cellRef,
@@ -234,9 +270,13 @@ export async function writeBooking(
       spreadsheetId: SPREADSHEET_ID,
       range: cellRef,
       valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[studentName]] },
+      requestBody: { values: [[cellValue]] },
     })
   }
+
+  // 赤背景を設定
+  const sheetId = await getSheetId('2026')
+  await setCellBackground(sheets, sheetId, rowIndex, colIndex)
 }
 
 // 特定の日付・時間枠の予約状況を確認

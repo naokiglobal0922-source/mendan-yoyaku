@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'この枠は既に予約済みです' }, { status: 409 })
     }
 
-    await writeBooking(date, slot, studentName)
+    await writeBooking(date, slot, studentName, type)
 
     // LINE通知
     const msg = `【面談予約】\n生徒名: ${studentName}\n日時: ${date} ${slot}\n種別: ${type}\n${note ? `備考: ${note}` : ''}`
