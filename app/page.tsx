@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
 const MEETING_TYPES = ['2者面談', '3者面談']
@@ -62,6 +62,12 @@ export default function HomePage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [slots, setSlots] = useState<SlotStatus[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
+
+  const [blockedDates, setBlockedDates] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/blocked-dates').then(r => r.json()).then(d => setBlockedDates(d.dates || []))
+  }, [])
 
   const [formMode, setFormMode] = useState<FormMode>('none')
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)   // 新規選択中の枠
@@ -239,8 +245,8 @@ export default function HomePage() {
         {/* 週ナビゲーション */}
         <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-4">
-            <button onClick={() => setWeekOffset(w => w - 1)}
-              className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 active:scale-95 text-xl">‹</button>
+            <button onClick={() => setWeekOffset(w => w - 1)} disabled={weekOffset <= 0}
+              className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 active:scale-95 text-xl disabled:opacity-30 disabled:cursor-not-allowed">‹</button>
             <span className="text-sm font-semibold text-gray-700">
               {weekDates[0].getMonth() + 1}月{weekDates[0].getDate()}日 〜 {weekDates[4].getDate()}日
             </span>
@@ -250,11 +256,13 @@ export default function HomePage() {
           <div className="grid grid-cols-5 gap-2">
             {weekDates.map((date) => {
               const isPast = date < new Date(today.getFullYear(), today.getMonth(), today.getDate())
+              const isBlocked = blockedDates.includes(formatDateForSheet(date))
+              const isDisabled = isPast || isBlocked
               const isSelected = selectedDate?.toDateString() === date.toDateString()
               return (
-                <button key={date.toISOString()} disabled={isPast} onClick={() => handleSelectDate(date)}
+                <button key={date.toISOString()} disabled={isDisabled} onClick={() => handleSelectDate(date)}
                   className={`flex flex-col items-center py-3 rounded-xl transition-all ${
-                    isPast ? 'text-gray-300 bg-gray-50 cursor-not-allowed'
+                    isDisabled ? 'text-gray-300 bg-gray-50 cursor-not-allowed'
                     : isSelected ? 'bg-blue-600 text-white shadow-md'
                     : 'bg-gray-50 text-gray-700 active:scale-95 hover:bg-gray-100'}`}>
                   <span className="text-[11px] font-medium">{DAYS_JP[date.getDay()]}</span>

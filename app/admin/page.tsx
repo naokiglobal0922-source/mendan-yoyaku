@@ -16,13 +16,15 @@ export default function AdminPage() {
   const [password, setPassword] = useState('')
   const [authed, setAuthed] = useState(false)
   const [authError, setAuthError] = useState('')
-  const [tab, setTab] = useState<'bookings' | 'students' | 'interviews'>('bookings')
+  const [tab, setTab] = useState<'bookings' | 'students' | 'interviews' | 'blocked'>('bookings')
 
   const [bookings, setBookings] = useState<BookingEntry[]>([])
   const [students, setStudents] = useState<string[]>([])
   const [newStudentName, setNewStudentName] = useState('')
   const [interviewName, setInterviewName] = useState('')
   const [interviewDate, setInterviewDate] = useState('')
+  const [blockedDates, setBlockedDates] = useState<string[]>([])
+  const [newBlockedDate, setNewBlockedDate] = useState('')
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
   const authHeader = encodeBasicAuth(password)
@@ -55,9 +57,35 @@ export default function AdminPage() {
     }
   }
 
+  const loadBlockedDates = async () => {
+    const res = await fetch('/api/admin/blocked-dates', { headers: { Authorization: authHeader } })
+    if (res.ok) { const data = await res.json(); setBlockedDates(data.dates || []) }
+  }
+
+  const addBlockedDate = async () => {
+    if (!newBlockedDate) return
+    const res = await fetch('/api/admin/blocked-dates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: JSON.stringify({ date: newBlockedDate }),
+    })
+    if (res.ok) { setMessage({ ok: true, text: `${newBlockedDate} を不可日に設定しました` }); setNewBlockedDate(''); loadBlockedDates() }
+    else setMessage({ ok: false, text: '設定に失敗しました' })
+  }
+
+  const removeBlockedDate = async (date: string) => {
+    const res = await fetch('/api/admin/blocked-dates', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: JSON.stringify({ date }),
+    })
+    if (res.ok) { setMessage({ ok: true, text: `${date} を解除しました` }); loadBlockedDates() }
+  }
+
   useEffect(() => {
     if (authed && tab === 'bookings') loadBookings()
     if (authed && (tab === 'students' || tab === 'interviews')) loadStudents()
+    if (authed && tab === 'blocked') loadBlockedDates()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, tab])
 
@@ -136,6 +164,7 @@ export default function AdminPage() {
     { key: 'bookings', label: '予約一覧' },
     { key: 'students', label: '名簿管理' },
     { key: 'interviews', label: '面談済み記録' },
+    { key: 'blocked', label: '不可日設定' },
   ] as const
 
   return (
@@ -284,6 +313,42 @@ export default function AdminPage() {
               >
                 面談済みとして記録する
               </button>
+            </div>
+          </div>
+        )}
+        {/* 面談不可日設定 */}
+        {tab === 'blocked' && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">面談不可日の設定</h2>
+            <p className="text-xs text-gray-400 mb-4">設定した日付はカレンダーでグレーアウトされ選択不可になります</p>
+
+            <div className="flex gap-2 mb-4">
+              <input
+                type="date"
+                value={newBlockedDate}
+                onChange={e => setNewBlockedDate(e.target.value)}
+                className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <button onClick={addBlockedDate}
+                className="bg-red-500 text-white font-bold px-5 rounded-xl text-sm">
+                追加
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {blockedDates.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-4">不可日は設定されていません</p>
+              ) : (
+                blockedDates.map(d => (
+                  <div key={d} className="flex items-center justify-between bg-red-50 rounded-xl px-4 py-3">
+                    <span className="text-sm font-medium text-red-700">{d}</span>
+                    <button onClick={() => removeBlockedDate(d)}
+                      className="text-xs text-gray-400 hover:text-gray-600 font-medium">
+                      解除
+                    </button>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}

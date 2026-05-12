@@ -75,6 +75,48 @@ export async function updateInterviewRecord(name: string, date: string): Promise
   })
 }
 
+// 面談不可日の取得（「設定」シートA列）
+export async function getBlockedDates(): Promise<string[]> {
+  try {
+    const sheets = await getSheetsClient()
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: '設定!A:A',
+    })
+    const rows = res.data.values || []
+    return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0)
+  } catch {
+    return []
+  }
+}
+
+// 面談不可日を追加
+export async function addBlockedDate(date: string): Promise<void> {
+  const sheets = await getSheetsClient()
+  await sheets.spreadsheets.values.append({
+    spreadsheetId: SPREADSHEET_ID,
+    range: '設定!A:A',
+    valueInputOption: 'USER_ENTERED',
+    requestBody: { values: [[date]] },
+  })
+}
+
+// 面談不可日を削除
+export async function removeBlockedDate(date: string): Promise<void> {
+  const sheets = await getSheetsClient()
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: SPREADSHEET_ID,
+    range: '設定!A:A',
+  })
+  const rows = res.data.values || []
+  const rowIndex = rows.findIndex(r => r[0] === date)
+  if (rowIndex < 0) return
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: SPREADSHEET_ID,
+    range: `設定!A${rowIndex + 1}`,
+  })
+}
+
 // 「2026」シートの予約状況を取得
 export async function getBookings(): Promise<{
   date: string
