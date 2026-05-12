@@ -81,12 +81,21 @@ function isGreyBackground(color?: { red?: number; green?: number; blue?: number 
   const r = color.red ?? 1
   const g = color.green ?? 1
   const b = color.blue ?? 1
-  // 白（デフォルト）は除外
   if (r > 0.88 && g > 0.88 && b > 0.88) return false
-  // 彩度が低い（R≒G≒B）= グレー系
   const max = Math.max(r, g, b)
   const min = Math.min(r, g, b)
   return max - min < 0.15
+}
+
+// セルの背景色が蛍光水色（シアン系）かどうか判定 → 追加可能枠の印
+function isCyanBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  const r = color.red ?? 1
+  const g = color.green ?? 1
+  const b = color.blue ?? 1
+  if (r > 0.88 && g > 0.88 && b > 0.88) return false
+  // 青・緑が高く、赤が低い（シアン系）
+  return b >= 0.6 && g >= 0.6 && r <= 0.7 && (g - r > 0.15 || b - r > 0.15)
 }
 
 // 面談不可日の取得：「2026」シートのA列でグレー背景のセルを不可日として検出
@@ -207,21 +216,40 @@ export async function getSlotStatusForDate(
   const getCellValue = (colIdx: number): string => (cells[colIdx] as any)?.formattedValue || ''
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellGrey = (colIdx: number): boolean => isGreyBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellCyan = (colIdx: number): boolean => isCyanBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
 
   // テキストありセルのバッファ計算（グレーセルは除外）
-  // 面談予約（アプリ経由）は30分バッファ、外部予定は45分バッファ
   const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
     const idx = colIdx as number
     const val = getCellValue(idx)
     if (!val) return
-    if (isCellGrey(idx)) return // グレーセルはバッファ対象外（その枠のみ不可）
+    if (isCellGrey(idx)) return
     const isAppBooking = /（(2者面談|3者面談)）/.test(val)
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
 
-  return BOOKABLE_SLOTS.map(slot => {
+  // シアン背景＋テキストなしの列から追加スロットを検出
+  const extraSlots: string[] = []
+  Object.entries(colMap).forEach(([header, colIdx]) => {
+    if (!header.includes(':')) return
+    const idx = colIdx as number
+    if (getCellValue(idx)) return // テキストありは対象外
+    if (!isCellCyan(idx)) return
+    const [h, m] = header.split(':').map(Number)
+    const slot1 = header
+    const slot2 = m === 0 ? `${h}:15` : `${h}:45`
+    if (!BOOKABLE_SLOTS.includes(slot1)) extraSlots.push(slot1)
+    if (!BOOKABLE_SLOTS.includes(slot2)) extraSlots.push(slot2)
+  })
+
+  const allSlots = [...BOOKABLE_SLOTS, ...extraSlots]
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
+
+  return allSlots.map(slot => {
     const { headerKey, isHalf } = getSheetSlotKey(slot)
     const colIdx = colMap[headerKey]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
@@ -314,25 +342,11 @@ function colIndexToLetter(index: number): string {
 }
 
 // 予約を書き込む
-// スプシのC列以降が30分刻みのため、15分刻み枠は以下のルールで管理:
-// 15:00 → "15:00"ヘッダーの列（上半分）
-// 15:15 → "15:00"ヘッダーの列に "15:15:{name}" として追記（セミコロン区切り）
-// 15:30 → "15:30"ヘッダーの列
-// 15:45 → "15:30"ヘッダーの列に "15:45:{name}" として追記
-// 16:00 → "16:00"ヘッダーの列
-// 16:15 → "16:00"ヘッダーの列に "16:15:{name}" として追記
-// 16:30 → "16:30"ヘッダーの列
-// 22:15 → "22:00"ヘッダーの列に "22:15:{name}" として追記
+// :15 → 親列は :00、:45 → 親列は :30、それ以外は直接列
 function getSheetSlotKey(slot: string): { headerKey: string; isHalf: boolean } {
-  const halfSlotMap: Record<string, string> = {
-    '15:15': '15:00',
-    '15:45': '15:30',
-    '16:15': '16:00',
-    '22:15': '22:00',
-  }
-  if (halfSlotMap[slot]) {
-    return { headerKey: halfSlotMap[slot], isHalf: true }
-  }
+  const [h, m] = slot.split(':').map(Number)
+  if (m === 15) return { headerKey: `${h}:00`, isHalf: true }
+  if (m === 45) return { headerKey: `${h}:30`, isHalf: true }
   return { headerKey: slot, isHalf: false }
 }
 
