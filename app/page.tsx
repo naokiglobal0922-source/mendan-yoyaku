@@ -106,7 +106,8 @@ export default function HomePage() {
     }
   }, [])
 
-  const resetForm = () => {
+  const resetForm = (skipReload = false) => {
+    const wasEditing = editingOldSlot !== null
     setFormMode('none')
     setSelectedSlot(null)
     setEditingOldSlot(null)
@@ -118,6 +119,8 @@ export default function HomePage() {
     setNote('')
     setChatNote('')
     setResult(null)
+    // 変更モードから抜けた場合、バッファを正しく適用したスロットに戻す
+    if (!skipReload && wasEditing && selectedDate) loadSlots(selectedDate)
   }
 
   const handleSelectDate = (date: Date) => {
@@ -176,7 +179,7 @@ export default function HomePage() {
       const data = await res.json()
       if (res.ok) {
         setResult({ ok: true, message: '予約が完了しました！' })
-        resetForm()
+        resetForm(true)
         loadSlots(selectedDate)
       } else {
         setResult({ ok: false, message: data.error || '予約に失敗しました' })
@@ -204,7 +207,7 @@ export default function HomePage() {
       const data = await res.json()
       if (res.ok) {
         setResult({ ok: true, message: '予約を変更しました！' })
-        resetForm()
+        resetForm(true)
         loadSlots(selectedDate)
       } else {
         setResult({ ok: false, message: data.error || '変更に失敗しました' })
@@ -229,7 +232,7 @@ export default function HomePage() {
       })
       if (res.ok) {
         setResult({ ok: true, message: '予約をキャンセルしました' })
-        resetForm()
+        resetForm(true)
         loadSlots(selectedDate)
       } else {
         const data = await res.json()
@@ -502,7 +505,7 @@ export default function HomePage() {
                     className="w-full border-2 border-red-200 text-red-500 font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all">
                     この予約をキャンセルする
                   </button>
-                  <button onClick={resetForm} className="w-full text-gray-400 text-sm py-2">
+                  <button onClick={() => resetForm()} className="w-full text-gray-400 text-sm py-2">
                     閉じる
                   </button>
                 </div>
