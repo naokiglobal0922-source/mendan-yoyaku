@@ -279,6 +279,79 @@ export async function writeBooking(
   await setCellBackground(sheets, sheetId, rowIndex, colIndex)
 }
 
+// セル背景を白（デフォルト）にリセット
+async function clearCellBackground(
+  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  sheetId: number,
+  rowIndex: number,
+  colIndex: number
+): Promise<void> {
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: SPREADSHEET_ID,
+    requestBody: {
+      requests: [{
+        updateCells: {
+          rows: [{
+            values: [{
+              userEnteredFormat: {
+                backgroundColor: { red: 1, green: 1, blue: 1 },
+              },
+            }],
+          }],
+          fields: 'userEnteredFormat.backgroundColor',
+          start: { sheetId, rowIndex, columnIndex: colIndex },
+        },
+      }],
+    },
+  })
+}
+
+// 予約をキャンセル（セルを空にして背景リセット）
+export async function cancelBooking(dateStr: string, slot: string): Promise<void> {
+  const sheets = await getSheetsClient()
+  const colMap = await getColumnMap()
+  const rowIndex = await findDateRow(dateStr)
+  if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
+
+  const { headerKey, isHalf } = getSheetSlotKey(slot)
+  const colIndex = colMap[headerKey]
+  if (colIndex === undefined) throw new Error(`列 ${headerKey} が見つかりません`)
+
+  const cellRef = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
+
+  if (isHalf) {
+    const existing = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: cellRef,
+    })
+    const current = ((existing.data.values || [[]])[0] || [])[0] || ''
+    const newVal = current
+      .split(' / ')
+      .filter((p: string) => !p.startsWith(`${slot}:`))
+      .join(' / ')
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: cellRef,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [[newVal]] },
+    })
+    // 残りの予約がなければ背景もリセット
+    if (!newVal) {
+      const sheetId = await getSheetId('2026')
+      await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
+    }
+  } else {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: cellRef,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: { values: [['']] },
+    })
+    const sheetId = await getSheetId('2026')
+    await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
+  }
+}
+
 // 特定の日付・時間枠の予約状況を確認
 export async function isSlotBooked(dateStr: string, slot: string): Promise<string | null> {
   const sheets = await getSheetsClient()

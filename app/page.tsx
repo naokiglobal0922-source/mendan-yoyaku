@@ -44,13 +44,19 @@ interface SlotStatus {
   booked: string | null
 }
 
+type Mode = 'new' | 'edit'
+
 export default function HomePage() {
   const today = new Date()
   const [weekOffset, setWeekOffset] = useState(0)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [slots, setSlots] = useState<SlotStatus[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
+
+  // フォーム状態
+  const [mode, setMode] = useState<Mode>('new')
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
+  const [editingOldSlot, setEditingOldSlot] = useState<string | null>(null)
   const [studentName, setStudentName] = useState('')
   const [meetingType, setMeetingType] = useState(MEETING_TYPES[0])
   const [selectedTopics, setSelectedTopics] = useState<string[]>([])
@@ -67,6 +73,7 @@ export default function HomePage() {
     setLoadingSlots(true)
     setSlots([])
     setSelectedSlot(null)
+    setEditingOldSlot(null)
     const dateStr = formatDateForSheet(date)
     try {
       const res = await fetch(`/api/bookings?date=${encodeURIComponent(dateStr)}`)
@@ -82,7 +89,48 @@ export default function HomePage() {
   const handleSelectDate = (date: Date) => {
     setSelectedDate(date)
     setResult(null)
+    resetForm()
     loadSlots(date)
+  }
+
+  const resetForm = () => {
+    setSelectedSlot(null)
+    setEditingOldSlot(null)
+    setStudentName('')
+    setMeetingType(MEETING_TYPES[0])
+    setSelectedTopics([])
+    setNote('')
+    setChatNote('')
+    setMode('new')
+    setResult(null)
+  }
+
+  // 空き枠タップ → 新規予約フォーム
+  const handleSelectEmptySlot = (slot: string) => {
+    setMode('new')
+    setSelectedSlot(s => s === slot ? null : slot)
+    setEditingOldSlot(null)
+    setStudentName('')
+    setMeetingType(MEETING_TYPES[0])
+    setSelectedTopics([])
+    setNote('')
+    setChatNote('')
+    setResult(null)
+  }
+
+  // 予約済み枠タップ → 変更フォーム
+  const handleSelectBookedSlot = (slot: string, bookedName: string) => {
+    setMode('edit')
+    setSelectedSlot(slot)
+    setEditingOldSlot(slot)
+    // セルの値から名前と種別を分離（例: "山田太郎（2者面談）"）
+    const match = bookedName.match(/^(.+?)（(.+?)）$/)
+    setStudentName(match ? match[1] : bookedName)
+    setMeetingType(match ? match[2] : MEETING_TYPES[0])
+    setSelectedTopics([])
+    setNote('')
+    setChatNote('')
+    setResult(null)
   }
 
   const toggleTopic = (topic: string) => {
@@ -91,17 +139,16 @@ export default function HomePage() {
     )
   }
 
-  const handleSubmit = async () => {
+  const buildNoteText = () => [
+    selectedTopics.length ? `【話したいこと】${selectedTopics.join('、')}` : '',
+    note ? `【備考】${note}` : '',
+    chatNote ? `【雑談】${chatNote}` : '',
+  ].filter(Boolean).join('\n')
+
+  const handleSubmitNew = async () => {
     if (!selectedDate || !selectedSlot || !studentName) return
     setSubmitting(true)
     setResult(null)
-
-    const noteText = [
-      selectedTopics.length ? `【話したいこと】${selectedTopics.join('、')}` : '',
-      note ? `【備考】${note}` : '',
-      chatNote ? `【雑談】${chatNote}` : '',
-    ].filter(Boolean).join('\n')
-
     try {
       const res = await fetch('/api/bookings', {
         method: 'POST',
@@ -111,17 +158,13 @@ export default function HomePage() {
           slot: selectedSlot,
           studentName,
           type: meetingType,
-          note: noteText,
+          note: buildNoteText(),
         }),
       })
       const data = await res.json()
       if (res.ok) {
         setResult({ ok: true, message: '予約が完了しました！' })
-        setSelectedSlot(null)
-        setStudentName('')
-        setSelectedTopics([])
-        setNote('')
-        setChatNote('')
+        resetForm()
         loadSlots(selectedDate)
       } else {
         setResult({ ok: false, message: data.error || '予約に失敗しました' })
@@ -132,6 +175,69 @@ export default function HomePage() {
       setSubmitting(false)
     }
   }
+
+  const handleSubmitEdit = async () => {
+    if (!selectedDate || !selectedSlot || !editingOldSlot || !studentName) return
+    setSubmitting(true)
+    setResult(null)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: formatDateForSheet(selectedDate),
+          oldSlot: editingOldSlot,
+          newSlot: selectedSlot,
+          studentName,
+          type: meetingType,
+          note: buildNoteText(),
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setResult({ ok: true, message: '予約を変更しました！' })
+        resetForm()
+        loadSlots(selectedDate)
+      } else {
+        setResult({ ok: false, message: data.error || '変更に失敗しました' })
+      }
+    } catch {
+      setResult({ ok: false, message: '通信エラーが発生しました' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    if (!selectedDate || !editingOldSlot) return
+    if (!confirm('この予約をキャンセルしますか？')) return
+    setSubmitting(true)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: formatDateForSheet(selectedDate),
+          slot: editingOldSlot,
+          studentName,
+        }),
+      })
+      if (res.ok) {
+        setResult({ ok: true, message: '予約をキャンセルしました' })
+        resetForm()
+        loadSlots(selectedDate)
+      } else {
+        const data = await res.json()
+        setResult({ ok: false, message: data.error || 'キャンセルに失敗しました' })
+      }
+    } catch {
+      setResult({ ok: false, message: '通信エラーが発生しました' })
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const showForm = selectedSlot !== null
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -191,9 +297,10 @@ export default function HomePage() {
         {/* 空き枠 */}
         {selectedDate && (
           <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">
-              {formatDateDisplay(selectedDate)} の空き枠
+            <h2 className="text-sm font-semibold text-gray-700 mb-1">
+              {formatDateDisplay(selectedDate)} の枠
             </h2>
+            <p className="text-xs text-gray-400 mb-4">予約済みの枠をタップすると変更できます</p>
 
             {loadingSlots ? (
               <div className="flex items-center justify-center py-8">
@@ -203,37 +310,80 @@ export default function HomePage() {
               <p className="text-sm text-gray-400 text-center py-6">データを取得できませんでした</p>
             ) : (
               <div className="grid grid-cols-4 gap-2">
-                {slots.map(({ slot, booked }) => (
-                  <button
-                    key={slot}
-                    disabled={!!booked}
-                    onClick={() => setSelectedSlot(s => s === slot ? null : slot)}
-                    className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                      booked
-                        ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                        : selectedSlot === slot
-                        ? 'bg-blue-600 text-white shadow-md'
-                        : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
-                    }`}
-                  >
-                    {slot}
-                    {booked && <span className="block text-[9px] mt-0.5 text-gray-400">予約済</span>}
-                  </button>
-                ))}
+                {slots.map(({ slot, booked }) => {
+                  const isSelected = selectedSlot === slot
+                  const isEditing = editingOldSlot !== null && mode === 'edit'
+                  // 変更モード中、別の空き枠は「移動先候補」として青く表示
+                  const isMoveTarget = isEditing && !booked && slot !== editingOldSlot
+
+                  return (
+                    <button
+                      key={slot}
+                      onClick={() => {
+                        if (booked) {
+                          handleSelectBookedSlot(slot, booked)
+                        } else if (isEditing) {
+                          // 変更モードで空き枠タップ → 移動先を変更
+                          setSelectedSlot(slot)
+                        } else {
+                          handleSelectEmptySlot(slot)
+                        }
+                      }}
+                      className={`py-3 rounded-xl text-sm font-bold transition-all ${
+                        booked
+                          ? isSelected
+                            ? 'bg-orange-500 text-white shadow-md ring-2 ring-orange-300'
+                            : 'bg-red-100 text-red-700 active:scale-95'
+                          : isSelected
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : isMoveTarget
+                          ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-300 active:scale-95'
+                          : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
+                      }`}
+                    >
+                      {slot}
+                      {booked ? (
+                        <span className="block text-[9px] mt-0.5 truncate px-1">
+                          {booked.replace(/（.+?）$/, '')}
+                        </span>
+                      ) : isMoveTarget ? (
+                        <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
+                      ) : null}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </section>
         )}
 
         {/* 予約フォーム */}
-        {selectedSlot && (
+        {showForm && (
           <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">
-              予約内容の入力 — {formatDateDisplay(selectedDate!)} {selectedSlot}
-            </h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-700">
+                {mode === 'edit' ? '予約の変更' : '予約内容の入力'} — {formatDateDisplay(selectedDate!)} {selectedSlot}
+              </h2>
+              {mode === 'edit' && (
+                <span className="text-xs bg-orange-100 text-orange-600 font-semibold px-2 py-1 rounded-full">変更モード</span>
+              )}
+            </div>
+
+            {mode === 'edit' && editingOldSlot !== selectedSlot && (
+              <div className="bg-blue-50 rounded-xl px-4 py-3 mb-4 text-sm text-blue-700">
+                <p className="font-semibold">時間帯の変更</p>
+                <p className="mt-0.5">{editingOldSlot} → {selectedSlot}</p>
+                <p className="text-xs text-blue-500 mt-1">上の枠一覧から別の時間を選び直せます</p>
+              </div>
+            )}
+
+            {mode === 'edit' && editingOldSlot === selectedSlot && (
+              <div className="bg-gray-50 rounded-xl px-4 py-2 mb-4 text-xs text-gray-500">
+                時間帯を変更する場合は上の枠一覧から別の空き枠をタップしてください
+              </div>
+            )}
 
             <div className="space-y-5">
-              {/* 生徒名（記述） */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">生徒名 *</label>
                 <input
@@ -245,7 +395,6 @@ export default function HomePage() {
                 />
               </div>
 
-              {/* 面談希望 */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談希望 *</label>
                 <div className="flex gap-2">
@@ -254,9 +403,7 @@ export default function HomePage() {
                       key={t}
                       onClick={() => setMeetingType(t)}
                       className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
-                        meetingType === t
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        meetingType === t ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                       }`}
                     >
                       {t}
@@ -265,7 +412,6 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* 話したいこと（選択式） */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-2">
                   話したいこと <span className="font-normal text-gray-400">（当てはまるものを選択）</span>
@@ -285,7 +431,6 @@ export default function HomePage() {
                 </div>
               </div>
 
-              {/* 備考 */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">備考（任意）</label>
                 <textarea
@@ -297,7 +442,6 @@ export default function HomePage() {
                 />
               </div>
 
-              {/* 雑談 */}
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">
                   雑談・なんでもどうぞ <span className="font-normal text-gray-400">（任意）</span>
@@ -319,13 +463,38 @@ export default function HomePage() {
                 </div>
               )}
 
-              <button
-                onClick={handleSubmit}
-                disabled={!studentName || submitting}
-                className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
-              >
-                {submitting ? '送信中...' : '予約を確定する'}
-              </button>
+              {mode === 'new' ? (
+                <button
+                  onClick={handleSubmitNew}
+                  disabled={!studentName || submitting}
+                  className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
+                >
+                  {submitting ? '送信中...' : '予約を確定する'}
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    onClick={handleSubmitEdit}
+                    disabled={!studentName || submitting}
+                    className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
+                  >
+                    {submitting ? '送信中...' : '変更を保存する'}
+                  </button>
+                  <button
+                    onClick={handleCancel}
+                    disabled={submitting}
+                    className="w-full bg-white border-2 border-red-200 text-red-500 font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
+                  >
+                    この予約をキャンセルする
+                  </button>
+                  <button
+                    onClick={resetForm}
+                    className="w-full text-gray-400 text-sm py-2"
+                  >
+                    閉じる
+                  </button>
+                </div>
+              )}
             </div>
           </section>
         )}
