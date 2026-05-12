@@ -208,12 +208,15 @@ export async function getSlotStatusForDate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellGrey = (colIdx: number): boolean => isGreyBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
 
-  // 時間ヘッダー列の状況（バッファ計算用）
+  // テキストありセルのバッファ計算（グレーセルは除外）
+  // 面談予約（アプリ経由）は30分バッファ、外部予定は45分バッファ
   const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
-    const val = getCellValue(colIdx as number)
+    const idx = colIdx as number
+    const val = getCellValue(idx)
     if (!val) return
+    if (isCellGrey(idx)) return // グレーセルはバッファ対象外（その枠のみ不可）
     const isAppBooking = /（(2者面談|3者面談)）/.test(val)
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
