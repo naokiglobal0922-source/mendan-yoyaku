@@ -1,36 +1,99 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 面談予約×名簿管理アプリ
 
-## Getting Started
+塾の面談予約をGoogle Sheetsと連携して管理するWebアプリです。
 
-First, run the development server:
+## 機能
+
+- **保護者向け（/）**: 週単位カレンダーで空き枠確認・予約
+- **管理者向け（/admin）**: 予約一覧・名簿管理・面談済み記録
+
+## 技術スタック
+
+- Next.js 14 (App Router) + TypeScript
+- Tailwind CSS
+- Google Sheets API v4
+- LINE Messaging API
+
+## セットアップ
+
+### 1. Google Service Account の準備
+
+1. [Google Cloud Console](https://console.cloud.google.com/) でプロジェクトを作成
+2. Google Sheets API を有効化
+3. サービスアカウントを作成し、JSONキーをダウンロード
+4. スプレッドシートをサービスアカウントのメールアドレスに共有（編集権限）
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# JSONキーをBase64エンコード
+cat service-account.json | base64
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. スプレッドシート構造
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**「2026」シート:**
+- A列: 日付（例: 4/1, 4/2 ...）
+- B列: 曜日
+- C列以降: 時間帯ヘッダー（8:00, 8:30, 9:00 ... 22:00, 22:30）
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+**「面談記録シート」:**
+- A列: 生徒名（1行目はヘッダー）
+- B列: 面談済みフラグ（「済」）
+- C列: 面談日付
 
-## Learn More
+### 3. 環境変数（.env.local）
 
-To learn more about Next.js, take a look at the following resources:
+```
+GOOGLE_SERVICE_ACCOUNT_KEY=  # base64エンコードしたService Account JSON
+SPREADSHEET_ID=1MdowjWSMPlFtoi-4yy9ajpWCHQ1K-hqabPZCAbu-KIY
+LINE_CHANNEL_ACCESS_TOKEN=   # LINE Messaging API のアクセストークン
+LINE_USER_ID=                # 通知先のLINEユーザーID（塾長）
+ADMIN_PASSWORD=              # 管理者パスワード（任意の文字列）
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 4. ローカル起動
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm install
+npm run dev
+```
 
-## Deploy on Vercel
+## GitHub → Vercel デプロイ手順
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### GitHubにプッシュ
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+# gh CLIを使う場合
+gh repo create mendan-yoyaku --public --source=. --push
+
+# または手動
+git remote add origin https://github.com/ユーザー名/mendan-yoyaku.git
+git push -u origin main
+```
+
+### Vercelにデプロイ
+
+1. [Vercel](https://vercel.com/) にログイン
+2. 「Add New Project」→ GitHubリポジトリを選択
+3. 「Environment Variables」に以下を追加:
+   - `GOOGLE_SERVICE_ACCOUNT_KEY`
+   - `SPREADSHEET_ID`
+   - `LINE_CHANNEL_ACCESS_TOKEN`
+   - `LINE_USER_ID`
+   - `ADMIN_PASSWORD`
+4. 「Deploy」をクリック
+
+### 以後の更新
+
+```bash
+git add .
+git commit -m "update"
+git push
+# Vercelが自動でデプロイ
+```
+
+## LINE通知の設定
+
+1. [LINE Developers](https://developers.line.biz/) でチャネルを作成（Messaging API）
+2. チャネルアクセストークンを発行 → `LINE_CHANNEL_ACCESS_TOKEN`
+3. 塾長のLINEユーザーIDを取得 → `LINE_USER_ID`
+   - Webhook受信イベントの `source.userId` から取得するのが確実
