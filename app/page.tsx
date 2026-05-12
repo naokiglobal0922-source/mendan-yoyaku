@@ -299,12 +299,10 @@ export default function HomePage() {
                           }
                         }}
                         className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                          booked === '__blocked__'
-                            ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
-                            : booked
+                          booked
                             ? isCurrentEdit
                               ? 'bg-orange-400 text-white ring-2 ring-orange-300'
-                              : 'bg-red-100 text-red-600 cursor-default'
+                              : 'bg-gray-100 text-gray-300 cursor-not-allowed'
                             : isMoveSelected
                               ? 'bg-blue-600 text-white shadow-md ring-2 ring-blue-300'
                               : isMoveDest
@@ -314,10 +312,8 @@ export default function HomePage() {
                               : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
                         }`}>
                         {slot}
-                        {booked === '__blocked__' ? (
+                        {booked ? (
                           <span className="block text-[9px] mt-0.5 text-gray-400">予約不可</span>
-                        ) : booked ? (
-                          <span className="block text-[9px] mt-0.5 text-red-400">予約済み</span>
                         ) : isMoveDest ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
                         ) : null}
