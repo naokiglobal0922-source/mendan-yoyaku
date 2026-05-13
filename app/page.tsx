@@ -49,8 +49,17 @@ function extractName(cellValue: string): string {
   return m ? m[1] : cellValue
 }
 function extractType(cellValue: string): string {
-  const m = cellValue.match(/（(.+?)）$/)
+  const m = cellValue.match(/（(.+?)）/)
   return m ? m[1] : MEETING_TYPES[0]
+}
+function extractTopicsFromCell(cellValue: string): string[] {
+  const m = cellValue.match(/【話したいこと】([^\n]*)/)
+  if (!m) return []
+  return m[1].split('、').map(s => s.trim()).filter(Boolean)
+}
+function extractNoteFromCell(cellValue: string, key: string): string {
+  const m = cellValue.match(new RegExp(`【${key}】([^\\n]*)`))
+  return m ? m[1].trim() : ''
 }
 
 type FormMode = 'none' | 'new' | 'verify' | 'edit'
@@ -152,9 +161,9 @@ export default function HomePage() {
     setSelectedSlot(oldSlot)
     setStudentName(extractName(found.booked!))
     setMeetingType(extractType(found.booked!))
-    setSelectedTopics([])
-    setNote('')
-    setChatNote('')
+    setSelectedTopics(extractTopicsFromCell(found.booked!))
+    setNote(extractNoteFromCell(found.booked!, '備考'))
+    setChatNote(extractNoteFromCell(found.booked!, '雑談'))
     setVerifyError('')
     setFormMode('edit')
     // 変更元スロットのバッファを除外して再読み込み

@@ -196,7 +196,7 @@ export default function AdminPage() {
                         {Object.entries(b.slots).map(([time, name]) => (
                           <div key={time} className="flex items-center gap-2 text-sm">
                             <span className="text-blue-600 font-mono w-12 flex-shrink-0">{time}</span>
-                            <span className="text-gray-700">{name}</span>
+                            <span className="text-gray-700">{name.split('\n')[0]}</span>
                           </div>
                         ))}
                       </div>

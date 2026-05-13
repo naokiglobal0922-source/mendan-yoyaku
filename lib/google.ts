@@ -198,7 +198,7 @@ export async function findBookingsByName(name: string): Promise<{
 
   for (const { date, dayOfWeek, slots } of bookings) {
     for (const [slot, cellValue] of Object.entries(slots)) {
-      const m = cellValue.match(/^(.+?)（(.+?)）$/)
+      const m = cellValue.match(/^(.+?)（(.+?)）/)
       if (m && m[1] === name) {
         results.push({ date, dayOfWeek, slot, type: m[2] })
       }
@@ -410,7 +410,8 @@ export async function writeBooking(
   dateStr: string,
   slot: string,
   studentName: string,
-  meetingType: string
+  meetingType: string,
+  noteText?: string
 ): Promise<void> {
   const sheets = await getSheetsClient()
   const colMap = await getColumnMap()
@@ -420,11 +421,14 @@ export async function writeBooking(
   const colIndex = colMap[slot]
   if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
+  const base = `${studentName}（${meetingType}）`
+  const cellValue = noteText ? `${base}\n${noteText}` : base
+
   await sheets.spreadsheets.values.update({
     spreadsheetId: SPREADSHEET_ID,
     range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: [[`${studentName}（${meetingType}）`]] },
+    requestBody: { values: [[cellValue]] },
   })
 
   const sheetId = await getSheetId('2026')

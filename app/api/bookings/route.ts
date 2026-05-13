@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'この枠は予約できません（予約済みまたは直前に別の予定があります）' }, { status: 409 })
     }
 
-    await writeBooking(date, slot, studentName, type)
+    await writeBooking(date, slot, studentName, type, note || undefined)
 
     const msg = `【面談予約】\n生徒名: ${studentName}\n日時: ${date} ${slot}\n種別: ${type}\n${note ? `\n${note}` : ''}`
     await sendLineNotification(msg)
@@ -63,7 +63,7 @@ export async function PUT(request: NextRequest) {
     }
 
     await cancelBooking(date, oldSlot)
-    await writeBooking(date, newSlot, studentName, type)
+    await writeBooking(date, newSlot, studentName, type, note || undefined)
 
     const msg = `【面談予約変更】\n生徒名: ${studentName}\n変更前: ${date} ${oldSlot}\n変更後: ${date} ${newSlot}\n種別: ${type}\n${note ? `\n${note}` : ''}`
     await sendLineNotification(msg)
