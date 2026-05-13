@@ -87,15 +87,21 @@ function isGreyBackground(color?: { red?: number; green?: number; blue?: number 
   return max - min < 0.15
 }
 
-// セルの背景色が蛍光水色（シアン系）かどうか判定 → 追加可能枠の印
+// セルの背景色が水色・シアン系かどうか判定 → 追加可能枠の印
+// G と B が R より高く（青緑系）、かつグレー・白でないもの全般を検出
 function isCyanBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
   const r = color.red ?? 1
   const g = color.green ?? 1
   const b = color.blue ?? 1
-  if (r > 0.88 && g > 0.88 && b > 0.88) return false
-  // 青・緑が高く、赤が低い（シアン系）
-  return b >= 0.6 && g >= 0.6 && r <= 0.7 && (g - r > 0.15 || b - r > 0.15)
+  // ほぼ白（デフォルト背景含む）は除外
+  if (r > 0.92 && g > 0.92 && b > 0.92) return false
+  // グレー系は除外（彩度が低い）
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max - min < 0.1) return false
+  // シアン系: 緑と青が両方とも赤より高い（水色・青緑全般）
+  return g > r && b > r && Math.max(g, b) > 0.4
 }
 
 // 面談不可日の取得：「2026」シートのA列でグレー背景のセルを不可日として検出
