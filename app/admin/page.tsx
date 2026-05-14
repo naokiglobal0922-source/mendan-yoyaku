@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from 'react'
+import { TEACHERS } from '@/lib/teachers'
 
 interface BookingEntry {
   date: string
@@ -16,6 +17,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState('')
   const [authed, setAuthed] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [teacherId, setTeacherId] = useState('haraguchi')
   const [tab, setTab] = useState<'bookings' | 'students' | 'interviews' | 'blocked'>('bookings')
 
   const [bookings, setBookings] = useState<BookingEntry[]>([])
@@ -28,7 +30,7 @@ export default function AdminPage() {
   const authHeader = encodeBasicAuth(password)
 
   const verify = async () => {
-    const res = await fetch('/api/admin/students', {
+    const res = await fetch(`/api/admin/students?teacher=${teacherId}`, {
       headers: { Authorization: authHeader },
     })
     if (res.ok) {
@@ -42,13 +44,13 @@ export default function AdminPage() {
   }
 
   const loadStudents = async () => {
-    const res = await fetch('/api/admin/students', { headers: { Authorization: authHeader } })
+    const res = await fetch(`/api/admin/students?teacher=${teacherId}`, { headers: { Authorization: authHeader } })
     const data = await res.json()
     setStudents(data.students || [])
   }
 
   const loadBookings = async () => {
-    const res = await fetch('/api/bookings/all', { headers: { Authorization: authHeader } })
+    const res = await fetch(`/api/bookings/all?teacher=${teacherId}`, { headers: { Authorization: authHeader } })
     if (res.ok) {
       const data = await res.json()
       setBookings(data.bookings || [])
@@ -59,14 +61,14 @@ export default function AdminPage() {
     if (authed && tab === 'bookings') loadBookings()
     if (authed && (tab === 'students' || tab === 'interviews')) loadStudents()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authed, tab])
+  }, [authed, tab, teacherId])
 
   const addStudent = async () => {
     if (!newStudentName.trim()) return
     const res = await fetch('/api/admin/students', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify({ name: newStudentName.trim() }),
+      body: JSON.stringify({ name: newStudentName.trim(), teacherId }),
     })
     if (res.ok) {
       setMessage({ ok: true, text: `${newStudentName} を追加しました` })
@@ -82,7 +84,7 @@ export default function AdminPage() {
     const res = await fetch('/api/admin/students', {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, teacherId }),
     })
     if (res.ok) {
       setMessage({ ok: true, text: `${name} を削除しました` })
@@ -95,7 +97,7 @@ export default function AdminPage() {
     const res = await fetch('/api/admin/interviews', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-      body: JSON.stringify({ name: interviewName, date: interviewDate }),
+      body: JSON.stringify({ name: interviewName, date: interviewDate, teacherId }),
     })
     if (res.ok) {
       setMessage({ ok: true, text: `${interviewName} の面談済みを記録しました` })
@@ -154,6 +156,23 @@ export default function AdminPage() {
       </header>
 
       <div className="max-w-2xl mx-auto px-4 py-6">
+        {/* 先生選択 */}
+        <div className="flex gap-2 mb-4">
+          {TEACHERS.map(t => (
+            <button
+              key={t.id}
+              onClick={() => { setTeacherId(t.id); setMessage(null) }}
+              className={`px-4 py-2 rounded-xl text-sm font-semibold transition-all border ${
+                teacherId === t.id
+                  ? 'bg-gray-900 text-white border-gray-900'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+              }`}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+
         {/* タブ */}
         <div className="flex gap-2 mb-6 bg-gray-100 rounded-xl p-1">
           {TABS.map(t => (
@@ -288,6 +307,7 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
         {/* 面談不可日設定 */}
         {tab === 'blocked' && (
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">

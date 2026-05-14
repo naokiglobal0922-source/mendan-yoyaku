@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkAdminAuth } from '@/lib/auth'
-import { getBookings } from '@/lib/google'
+import { getBookings, getSpreadsheetId } from '@/lib/google'
 
 export async function GET(request: NextRequest) {
   if (!checkAdminAuth(request)) {
@@ -9,8 +9,12 @@ export async function GET(request: NextRequest) {
       headers: { 'WWW-Authenticate': 'Basic realm="Admin"' },
     })
   }
+
+  const teacherId = request.nextUrl.searchParams.get('teacher') ?? 'haraguchi'
+
   try {
-    const bookings = await getBookings()
+    const spreadsheetId = getSpreadsheetId(teacherId)
+    const bookings = await getBookings(spreadsheetId)
     return NextResponse.json({ bookings })
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })

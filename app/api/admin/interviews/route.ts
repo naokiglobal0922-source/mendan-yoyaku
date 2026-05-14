@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkAdminAuth } from '@/lib/auth'
-import { updateInterviewRecord } from '@/lib/google'
+import { updateInterviewRecord, getSpreadsheetId } from '@/lib/google'
 
 export async function POST(request: NextRequest) {
   if (!checkAdminAuth(request)) {
@@ -9,8 +9,9 @@ export async function POST(request: NextRequest) {
       headers: { 'WWW-Authenticate': 'Basic realm="Admin"' },
     })
   }
-  const { name, date } = await request.json()
+  const { name, date, teacherId } = await request.json()
   if (!name || !date) return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
-  await updateInterviewRecord(name, date)
+  const spreadsheetId = getSpreadsheetId(teacherId ?? 'haraguchi')
+  await updateInterviewRecord(spreadsheetId, name, date)
   return NextResponse.json({ success: true })
 }
