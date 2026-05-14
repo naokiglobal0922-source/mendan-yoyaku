@@ -13,8 +13,19 @@ export const TEACHERS = [
 
 export type TeacherId = typeof TEACHERS[number]['id']
 
+const SCHOOL_TEACHER_ORDER: Record<string, string[]> = {
+  fujimino: ['futagami', 'okamiya'],
+}
+
 export function getTeachersBySchool(schoolId: string) {
-  return TEACHERS.filter(t => (t.schools as readonly string[]).includes(schoolId))
+  const filtered = TEACHERS.filter(t => (t.schools as readonly string[]).includes(schoolId))
+  const order = SCHOOL_TEACHER_ORDER[schoolId]
+  if (!order) return filtered
+  return [...filtered].sort((a, b) => {
+    const ai = order.indexOf(a.id)
+    const bi = order.indexOf(b.id)
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi)
+  })
 }
 
 export function getTeacher(teacherId: string) {
