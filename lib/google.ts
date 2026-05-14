@@ -271,6 +271,15 @@ export async function getSlotStatusForDate(
   })
   const cells = res.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || []
 
+  // 日付セル（A列=index0）またはB列の色で「その日全体」の学校制限を判定
+  // 個別のタイムスロットセルではなく日付行全体が着色されている場合に対応
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dateCellBg = (cells[0] as any)?.effectiveFormat?.backgroundColor
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dayOfWeekCellBg = (cells[1] as any)?.effectiveFormat?.backgroundColor
+  const isDayYellow = isYellowBackground(dateCellBg) || isYellowBackground(dayOfWeekCellBg)
+  const isDayCyan = isCyanBackground(dateCellBg) || isCyanBackground(dayOfWeekCellBg)
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getCellValue = (colIdx: number): string => (cells[colIdx] as any)?.formattedValue || ''
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -338,6 +347,10 @@ export async function getSlotStatusForDate(
     if (colIdx !== undefined && isOtherSchoolCell(colIdx)) {
       return { slot, booked: '__blocked__' }
     }
+
+    // 日付セルが他校色の場合、その日の全スロットをブロック
+    if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__' }
+    if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__' }
 
     const slotMins = timeToMinutes(slot)
 
