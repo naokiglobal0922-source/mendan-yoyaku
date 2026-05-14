@@ -83,6 +83,15 @@ export async function updateInterviewRecord(spreadsheetId: string, name: string,
   })
 }
 
+// セルの背景色が白（無色）かどうか判定
+function isWhiteOrDefaultBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return true
+  const r = color.red ?? 1
+  const g = color.green ?? 1
+  const b = color.blue ?? 1
+  return r > 0.95 && g > 0.95 && b > 0.95
+}
+
 // セルの背景色がグレー系かどうか判定
 function isGreyBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
@@ -254,6 +263,7 @@ export async function getSlotStatusForDate(
   dateStr: string,
   excludeSlot?: string,
   schoolId?: string,
+  teacherId?: string,
   debug?: boolean
 ): Promise<{ slot: string; booked: string | null; _debug?: unknown }[]> {
   const sheets = await getSheetsClient()
@@ -352,6 +362,18 @@ export async function getSlotStatusForDate(
 
     if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__', _debug: debugInfo }
     if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__', _debug: debugInfo }
+
+    // 岡宮/原口: 白（無色）セルは面談不可。原口は水色のみ予約可。
+    if (teacherId === 'okamiya' || teacherId === 'haraguchi') {
+      if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const bg = (cells[colIdx] as any)?.effectiveFormat?.backgroundColor
+      if (isWhiteOrDefaultBackground(bg)) return { slot, booked: '__blocked__', _debug: debugInfo }
+      // 原口は水色のみ（黄色は isOtherSchoolCell で既に処理済み）
+      if (teacherId === 'haraguchi' && !isCellCyan(colIdx)) {
+        return { slot, booked: '__blocked__', _debug: debugInfo }
+      }
+    }
 
     const slotMins = timeToMinutes(slot)
 

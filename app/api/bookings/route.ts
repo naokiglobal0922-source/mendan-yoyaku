@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   try {
     const spreadsheetId = getSpreadsheetId(teacherId)
     const isDebug = request.nextUrl.searchParams.get('_debug') === '1'
-    const slots = await getSlotStatusForDate(spreadsheetId, date, excludeSlot, schoolId, isDebug)
+    const slots = await getSlotStatusForDate(spreadsheetId, date, excludeSlot, schoolId, teacherId ?? undefined, isDebug)
     return NextResponse.json({ date, slots })
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
     }
 
     const spreadsheetId = getSpreadsheetId(teacherId)
-    const slots = await getSlotStatusForDate(spreadsheetId, date, undefined, schoolId)
+    const slots = await getSlotStatusForDate(spreadsheetId, date, undefined, schoolId, teacherId)
     const target = slots.find(s => s.slot === slot)
     if (target?.booked) {
       return NextResponse.json({ error: 'この枠は予約できません（予約済みまたは直前に別の予定があります）' }, { status: 409 })
@@ -59,7 +59,7 @@ export async function PUT(request: NextRequest) {
     const spreadsheetId = getSpreadsheetId(teacherId)
 
     if (oldSlot !== newSlot) {
-      const slots = await getSlotStatusForDate(spreadsheetId, date, oldSlot, schoolId)
+      const slots = await getSlotStatusForDate(spreadsheetId, date, oldSlot, schoolId, teacherId)
       const target = slots.find(s => s.slot === newSlot)
       if (target?.booked) {
         return NextResponse.json({ error: '変更先の枠は予約できません' }, { status: 409 })
