@@ -1,6 +1,15 @@
 import { google } from 'googleapis'
 
-const SPREADSHEET_ID = process.env.SPREADSHEET_ID!
+export function getSpreadsheetId(teacherId: string): string {
+  const map: Record<string, string | undefined> = {
+    haraguchi: process.env.SPREADSHEET_ID_HARAGUCHI ?? process.env.SPREADSHEET_ID,
+    okamiya:   process.env.SPREADSHEET_ID_OKAMIYA,
+    futagami:  process.env.SPREADSHEET_ID_FUTAGAMI,
+  }
+  const id = map[teacherId]
+  if (!id) throw new Error(`Spreadsheet ID not configured for: ${teacherId}`)
+  return id
+}
 
 function getAuth() {
   const encoded = process.env.GOOGLE_SERVICE_ACCOUNT_KEY!
@@ -17,21 +26,21 @@ export async function getSheetsClient() {
 }
 
 // 「面談記録シート」から生徒名簿を取得（A列）
-export async function getStudents(): Promise<string[]> {
+export async function getStudents(spreadsheetId: string): Promise<string[]> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '面談記録シート!A:A',
   })
   const rows = res.data.values || []
-  return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0) // skip header
+  return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0)
 }
 
 // 「面談記録シート」に生徒を追加
-export async function addStudent(name: string): Promise<void> {
+export async function addStudent(spreadsheetId: string, name: string): Promise<void> {
   const sheets = await getSheetsClient()
   await sheets.spreadsheets.values.append({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '面談記録シート!A:A',
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [[name, '', '']] },
@@ -39,28 +48,27 @@ export async function addStudent(name: string): Promise<void> {
 }
 
 // 「面談記録シート」から生徒を削除（A列で検索）
-export async function deleteStudent(name: string): Promise<void> {
+export async function deleteStudent(spreadsheetId: string, name: string): Promise<void> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '面談記録シート!A:A',
   })
   const rows = res.data.values || []
   const rowIndex = rows.findIndex(r => r[0] === name)
   if (rowIndex < 0) return
 
-  // 行をクリア（削除の代わりにクリア）
   await sheets.spreadsheets.values.clear({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `面談記録シート!A${rowIndex + 1}:D${rowIndex + 1}`,
   })
 }
 
 // 「面談記録シート」の面談済みチェック・日付を更新
-export async function updateInterviewRecord(name: string, date: string): Promise<void> {
+export async function updateInterviewRecord(spreadsheetId: string, name: string, date: string): Promise<void> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '面談記録シート!A:A',
   })
   const rows = res.data.values || []
@@ -68,7 +76,7 @@ export async function updateInterviewRecord(name: string, date: string): Promise
   if (rowIndex < 0) return
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `面談記録シート!B${rowIndex + 1}:C${rowIndex + 1}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [['済', date]] },
@@ -87,29 +95,40 @@ function isGreyBackground(color?: { red?: number; green?: number; blue?: number 
   return max - min < 0.15
 }
 
-// セルの背景色が水色・シアン系かどうか判定 → 追加可能枠の印
-// G と B が R より高く（青緑系）、かつグレー・白でないもの全般を検出
+// セルの背景色が水色・シアン系かどうか判定（鶴瀬の追加枠）
 function isCyanBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
-  const r = color.red ?? 1
-  const g = color.green ?? 1
-  const b = color.blue ?? 1
-  // ほぼ白（デフォルト背景含む）は除外
-  if (r > 0.92 && g > 0.92 && b > 0.92) return false
-  // グレー系は除外（彩度が低い）
+  // 省略されたチャンネルは 0 扱い（#03ffff のように red≈0 の場合 API が red を省略する）
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
+  if (r > 0.93 && g > 0.93 && b > 0.93) return false
   const max = Math.max(r, g, b)
   const min = Math.min(r, g, b)
-  if (max - min < 0.1) return false
-  // シアン系: 緑と青が両方とも赤より高い（水色・青緑全般）
-  return g > r && b > r && Math.max(g, b) > 0.4
+  if (max - min < 0.06) return false
+  return g > r && b > r && Math.max(g, b) > 0.35
 }
 
-// 面談不可日の取得：「2026」シートのA列でグレー背景のセルを不可日として検出
-export async function getBlockedDates(): Promise<string[]> {
+// セルの背景色が黄色系かどうか判定（岡宮のふじみ野枠）
+function isYellowBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  // 省略されたチャンネルは 0 扱い（yellow=#FFFF00 は blue≈0 で API が blue を省略する場合がある）
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
+  if (r > 0.95 && g > 0.95 && b > 0.95) return false
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max - min < 0.08) return false
+  return r > 0.6 && g > 0.6 && b < r * 0.6 && b < g * 0.6
+}
+
+// 面談不可日の取得
+export async function getBlockedDates(spreadsheetId: string): Promise<string[]> {
   try {
     const sheets = await getSheetsClient()
     const res = await sheets.spreadsheets.get({
-      spreadsheetId: SPREADSHEET_ID,
+      spreadsheetId,
       ranges: ['2026!A:A'],
       includeGridData: true,
     })
@@ -118,13 +137,12 @@ export async function getBlockedDates(): Promise<string[]> {
     let currentMonth = 0
 
     rowData.forEach((row, i) => {
-      if (i === 0) return // ヘッダー行スキップ
+      if (i === 0) return
       const cell = row.values?.[0]
       if (!cell) return
       const cellValue = (cell.formattedValue || '').trim()
       if (!cellValue) return
 
-      // 月を追跡（"4/1" 形式の行で更新）
       if (cellValue.includes('/')) {
         const [m] = cellValue.split('/').map(Number)
         currentMonth = m
@@ -133,7 +151,6 @@ export async function getBlockedDates(): Promise<string[]> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       if (!isGreyBackground(cell.effectiveFormat?.backgroundColor as any)) return
 
-      // グレーなら不可日として追加
       if (cellValue.includes('/')) {
         blocked.push(cellValue)
       } else {
@@ -150,15 +167,15 @@ export async function getBlockedDates(): Promise<string[]> {
   }
 }
 
-// 「2026」シートの予約状況を取得（月コンテキストを追跡して完全日付を返す）
-export async function getBookings(): Promise<{
+// 「2026」シートの予約状況を取得
+export async function getBookings(spreadsheetId: string): Promise<{
   date: string
   dayOfWeek: string
   slots: Record<string, string>
 }[]> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '2026!A:AM',
   })
   const rows = res.data.values || []
@@ -192,14 +209,14 @@ export async function getBookings(): Promise<{
   return result
 }
 
-// 名前で予約を検索（保護者向け確認用）
-export async function findBookingsByName(name: string): Promise<{
+// 名前で予約を検索
+export async function findBookingsByName(spreadsheetId: string, name: string): Promise<{
   date: string
   dayOfWeek: string
   slot: string
   type: string
 }[]> {
-  const bookings = await getBookings()
+  const bookings = await getBookings(spreadsheetId)
   const results: { date: string; dayOfWeek: string; slot: string; type: string }[] = []
 
   for (const { date, dayOfWeek, slots } of bookings) {
@@ -232,24 +249,23 @@ function timeToMinutes(t: string): number {
   return h * 60 + m
 }
 
-// 1回のフェッチで日付行全体を読み、予約状況＋バッファ＋グレーセルブロックを返す
-// excludeSlot: 予約変更時に変更元スロットのバッファを除外する
 export async function getSlotStatusForDate(
+  spreadsheetId: string,
   dateStr: string,
-  excludeSlot?: string
+  excludeSlot?: string,
+  schoolId?: string
 ): Promise<{ slot: string; booked: string | null }[]> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap()
-  const rowIndex = await findDateRow(dateStr)
+  const colMap = await getColumnMap(spreadsheetId)
+  const rowIndex = await findDateRow(spreadsheetId, dateStr)
 
   if (rowIndex < 0) {
     return BOOKABLE_SLOTS.map(slot => ({ slot, booked: null }))
   }
 
-  // 値＋書式を一括取得
   const lastCol = colIndexToLetter(Object.keys(colMap).length + 2)
   const res = await sheets.spreadsheets.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     ranges: [`2026!A${rowIndex + 1}:${lastCol}${rowIndex + 1}`],
     includeGridData: true,
   })
@@ -261,27 +277,42 @@ export async function getSlotStatusForDate(
   const isCellGrey = (colIdx: number): boolean => isGreyBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellCyan = (colIdx: number): boolean => isCyanBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellYellow = (colIdx: number): boolean => isYellowBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+  // このschoolから見て「別の学校専用セル」かどうか
+  // 鶴瀬から見る場合: 黄色=ふじみ野専用 → 無視
+  // ふじみ野から見る場合: 水色=鶴瀬専用 → 無視
+  const isOtherSchoolCell = (colIdx: number): boolean => {
+    if (schoolId === 'tsuruse') return isCellYellow(colIdx)
+    if (schoolId === 'fujimino') return isCellCyan(colIdx)
+    return false
+  }
 
-  // テキストありセルのバッファ計算（グレーセルは除外、変更元スロットも除外）
+  const isExtraSlotCell = (colIdx: number): boolean => {
+    if (schoolId === 'fujimino') return isCellYellow(colIdx)
+    return isCellCyan(colIdx)
+  }
+
+  // 別の学校のセルは occupied 計算から除外する（時間ブロックに影響させない）
   const occupied: { mins: number; buffer: number }[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
-    if (header === excludeSlot) return // 変更元スロットのバッファは無視
+    if (header === excludeSlot) return
     const idx = colIdx as number
     const val = getCellValue(idx)
     if (!val) return
     if (isCellGrey(idx)) return
+    if (isOtherSchoolCell(idx)) return
     const isAppBooking = /（(2者面談|3者面談)）/.test(val)
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
 
-  // シアン背景＋テキストなしの列から追加スロットを検出（15分刻み：1列＝1スロット）
   const extraSlots: string[] = []
   Object.entries(colMap).forEach(([header, colIdx]) => {
     if (!header.includes(':')) return
     const idx = colIdx as number
     if (getCellValue(idx)) return
-    if (!isCellCyan(idx)) return
+    if (!isExtraSlotCell(idx)) return
     if (!BOOKABLE_SLOTS.includes(header)) extraSlots.push(header)
   })
 
@@ -293,22 +324,26 @@ export async function getSlotStatusForDate(
     const colIdx = colMap[slot]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
 
-    // 1. 予約あり（変更元スロット自身はそのまま booked として返す）
-    if (cellValue) return { slot, booked: cellValue }
+    if (cellValue) {
+      // 別の学校の予約は「存在しない」として空き扱い
+      if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null }
+      return { slot, booked: cellValue }
+    }
 
-    // 2. セルそのものがグレー → 直接ブロック
     if (colIdx !== undefined && isCellGrey(colIdx)) {
+      return { slot, booked: '__blocked__' }
+    }
+
+    // 空セルでも他校専用セルはブロック（例: 鶴瀬から見た黄色セル＝ふじみ野専用）
+    if (colIdx !== undefined && isOtherSchoolCell(colIdx)) {
       return { slot, booked: '__blocked__' }
     }
 
     const slotMins = timeToMinutes(slot)
 
-    // 3. 後方バッファチェック（この枠から始まる予定が次のエントリーに被る場合も不可）
-    //    例: 15:30に予定があれば 15:15 は不可（15:15+30分=15:45 > 15:30）
     const conflictsAhead = occupied.some(({ mins: t }) => slotMins < t && t < slotMins + 30)
     if (conflictsAhead) return { slot, booked: '__blocked__' }
 
-    // 4. 前方バッファチェック（面談予約=30分、外部予定=45分）
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
     if (isBlocked) return { slot, booked: '__blocked__' }
 
@@ -316,11 +351,10 @@ export async function getSlotStatusForDate(
   })
 }
 
-// 「2026」シートのヘッダー行を読み取り、列インデックスマップを作成
-async function getColumnMap(): Promise<Record<string, number>> {
+async function getColumnMap(spreadsheetId: string): Promise<Record<string, number>> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '2026!1:1',
   })
   const headers = (res.data.values || [[]])[0]
@@ -331,17 +365,14 @@ async function getColumnMap(): Promise<Record<string, number>> {
   return map
 }
 
-// 日付文字列から行インデックスを探す（A列）
-// スプシのA列は "4/1" → "2" → "3"... と月初だけ "月/日"、以降は日だけになっている
-async function findDateRow(dateStr: string): Promise<number> {
+async function findDateRow(spreadsheetId: string, dateStr: string): Promise<number> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: '2026!A:A',
   })
   const rows = res.data.values || []
 
-  // dateStr は "5/12" 形式
   const [targetMonth, targetDay] = dateStr.split('/').map(Number)
 
   let currentMonth = 0
@@ -350,12 +381,10 @@ async function findDateRow(dateStr: string): Promise<number> {
     if (!cell) continue
 
     if (cell.includes('/')) {
-      // "4/1" 形式 → 月を更新
       const [m, d] = cell.split('/').map(Number)
       currentMonth = m
       if (m === targetMonth && d === targetDay) return i
     } else {
-      // "2" "3"... 形式 → 現在の月で判定
       const d = Number(cell)
       if (!isNaN(d) && currentMonth === targetMonth && d === targetDay) return i
     }
@@ -363,7 +392,6 @@ async function findDateRow(dateStr: string): Promise<number> {
   return -1
 }
 
-// 列番号をA1記法に変換
 function colIndexToLetter(index: number): string {
   let letter = ''
   let n = index + 1
@@ -375,17 +403,15 @@ function colIndexToLetter(index: number): string {
   return letter
 }
 
-// 予約を書き込む
-
-// セルに赤背景を設定する
 async function setCellBackground(
   sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  spreadsheetId: string,
   sheetId: number,
   rowIndex: number,
   colIndex: number
 ): Promise<void> {
   await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     requestBody: {
       requests: [{
         updateCells: {
@@ -404,15 +430,15 @@ async function setCellBackground(
   })
 }
 
-// シートIDを取得
-async function getSheetId(sheetName: string): Promise<number> {
+async function getSheetId(spreadsheetId: string, sheetName: string): Promise<number> {
   const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID })
+  const res = await sheets.spreadsheets.get({ spreadsheetId })
   const sheet = res.data.sheets?.find(s => s.properties?.title === sheetName)
   return sheet?.properties?.sheetId ?? 0
 }
 
 export async function writeBooking(
+  spreadsheetId: string,
   dateStr: string,
   slot: string,
   studentName: string,
@@ -420,8 +446,8 @@ export async function writeBooking(
   noteText?: string
 ): Promise<void> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap()
-  const rowIndex = await findDateRow(dateStr)
+  const colMap = await getColumnMap(spreadsheetId)
+  const rowIndex = await findDateRow(spreadsheetId, dateStr)
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
   const colIndex = colMap[slot]
@@ -431,25 +457,25 @@ export async function writeBooking(
   const cellValue = noteText ? `${base}\n${noteText}` : base
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [[cellValue]] },
   })
 
-  const sheetId = await getSheetId('2026')
-  await setCellBackground(sheets, sheetId, rowIndex, colIndex)
+  const sheetId = await getSheetId(spreadsheetId, '2026')
+  await setCellBackground(sheets, spreadsheetId, sheetId, rowIndex, colIndex)
 }
 
-// セル背景を白（デフォルト）にリセット
 async function clearCellBackground(
   sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+  spreadsheetId: string,
   sheetId: number,
   rowIndex: number,
   colIndex: number
 ): Promise<void> {
   await sheets.spreadsheets.batchUpdate({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     requestBody: {
       requests: [{
         updateCells: {
@@ -468,38 +494,36 @@ async function clearCellBackground(
   })
 }
 
-// 予約をキャンセル（セルを空にして背景リセット）
-export async function cancelBooking(dateStr: string, slot: string): Promise<void> {
+export async function cancelBooking(spreadsheetId: string, dateStr: string, slot: string): Promise<void> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap()
-  const rowIndex = await findDateRow(dateStr)
+  const colMap = await getColumnMap(spreadsheetId)
+  const rowIndex = await findDateRow(spreadsheetId, dateStr)
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
   const colIndex = colMap[slot]
   if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [['']] },
   })
-  const sheetId = await getSheetId('2026')
-  await clearCellBackground(sheets, sheetId, rowIndex, colIndex)
+  const sheetId = await getSheetId(spreadsheetId, '2026')
+  await clearCellBackground(sheets, spreadsheetId, sheetId, rowIndex, colIndex)
 }
 
-// 特定の日付・時間枠の予約状況を確認
-export async function isSlotBooked(dateStr: string, slot: string): Promise<string | null> {
+export async function isSlotBooked(spreadsheetId: string, dateStr: string, slot: string): Promise<string | null> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap()
-  const rowIndex = await findDateRow(dateStr)
+  const colMap = await getColumnMap(spreadsheetId)
+  const rowIndex = await findDateRow(spreadsheetId, dateStr)
   if (rowIndex < 0) return null
 
   const colIndex = colMap[slot]
   if (colIndex === undefined) return null
 
   const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
+    spreadsheetId,
     range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
   })
   return ((res.data.values || [[]])[0] || [])[0] || null
