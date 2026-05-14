@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useCallback, useEffect } from 'react'
+import { SCHOOLS, TEACHERS, getTeachersBySchool, type SchoolId } from '@/lib/teachers'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
 const MEETING_TYPES = ['2者面談', '3者面談']
@@ -18,14 +19,15 @@ const TOPICS = [
   '夏期・冬期講習について',
 ]
 
-function getWeekDates(baseDate: Date): Date[] {
+function getWeekDates(baseDate: Date, startDay: number = 1): Date[] {
   const week: Date[] = []
   const day = baseDate.getDay()
-  const monday = new Date(baseDate)
-  monday.setDate(baseDate.getDate() - (day === 0 ? 6 : day - 1))
+  const diff = (day - startDay + 7) % 7
+  const firstDay = new Date(baseDate)
+  firstDay.setDate(baseDate.getDate() - diff)
   for (let i = 0; i < 5; i++) {
-    const d = new Date(monday)
-    d.setDate(monday.getDate() + i)
+    const d = new Date(firstDay)
+    d.setDate(firstDay.getDate() + i)
     week.push(d)
   }
   return week
@@ -64,18 +66,114 @@ function extractNoteFromCell(cellValue: string, key: string): string {
 
 type FormMode = 'none' | 'new' | 'verify' | 'edit'
 
-export default function HomePage() {
+// ── 校舎選択画面 ──────────────────────────────────────
+function SchoolSelect({ onSelect }: { onSelect: (id: SchoolId) => void }) {
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b border-gray-100">
+        <div className="max-w-lg mx-auto px-4 py-4">
+          <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
+          <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
+            EIMEI予備校面談予約システム
+          </h1>
+        </div>
+      </header>
+      <main className="max-w-lg mx-auto px-4 py-10">
+        <p className="text-sm font-semibold text-gray-600 mb-5">校舎を選択してください</p>
+        <div className="space-y-3">
+          {SCHOOLS.map(school => (
+            <button
+              key={school.id}
+              onClick={() => onSelect(school.id)}
+              className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
+            >
+              <p className="text-base font-bold text-gray-900">{school.name}</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {getTeachersBySchool(school.id).map(t => t.name).join('・')}
+              </p>
+            </button>
+          ))}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+// ── 先生選択画面 ──────────────────────────────────────
+function TeacherSelect({
+  schoolId,
+  onSelect,
+  onBack,
+}: {
+  schoolId: SchoolId
+  onSelect: (id: string) => void
+  onBack: () => void
+}) {
+  const school = SCHOOLS.find(s => s.id === schoolId)!
+  const teachers = getTeachersBySchool(schoolId)
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b border-gray-100">
+        <div className="max-w-lg mx-auto px-4 py-4">
+          <button onClick={onBack} className="flex items-center gap-1 text-xs text-gray-400 mb-2 hover:text-gray-600">
+            ‹ 校舎選択に戻る
+          </button>
+          <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
+          <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
+            {school.name}
+          </h1>
+        </div>
+      </header>
+      <main className="max-w-lg mx-auto px-4 py-10">
+        <p className="text-sm font-semibold text-gray-600 mb-5">先生を選択してください</p>
+        <div className="space-y-3">
+          {teachers.map(teacher => (
+            <button
+              key={teacher.id}
+              onClick={() => onSelect(teacher.id)}
+              className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
+            >
+              <p className="text-base font-bold text-gray-900">{teacher.name} 先生</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {(teacher.schools as readonly SchoolId[]).map(sid => SCHOOLS.find(s => s.id === sid)?.name).join('・')}
+              </p>
+            </button>
+          ))}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+// ── 予約メイン画面 ────────────────────────────────────
+function BookingPage({
+  teacherId,
+  schoolId,
+  teacherName,
+  schoolName,
+  weekStartDay,
+  onBack,
+}: {
+  teacherId: string
+  schoolId: string
+  teacherName: string
+  schoolName: string
+  weekStartDay: number
+  onBack: () => void
+}) {
   const today = new Date()
   const [weekOffset, setWeekOffset] = useState(0)
   const [selectedDate, setSelectedDate] = useState<Date | null>(null)
   const [slots, setSlots] = useState<SlotStatus[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
-
   const [blockedDates, setBlockedDates] = useState<string[]>([])
 
   useEffect(() => {
-    fetch('/api/blocked-dates').then(r => r.json()).then(d => setBlockedDates(d.dates || []))
-  }, [])
+    fetch(`/api/blocked-dates?teacher=${teacherId}`)
+      .then(r => r.json())
+      .then(d => setBlockedDates(d.dates || []))
+  }, [teacherId])
 
   const [formMode, setFormMode] = useState<FormMode>('none')
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
@@ -96,14 +194,14 @@ export default function HomePage() {
 
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
-  const weekDates = getWeekDates(baseDate)
+  const weekDates = getWeekDates(baseDate, weekStartDay)
 
   const loadSlots = useCallback(async (date: Date, excludeSlot?: string) => {
     setLoadingSlots(true)
     setSlots([])
     const dateStr = formatDateForSheet(date)
     try {
-      let url = `/api/bookings?date=${encodeURIComponent(dateStr)}`
+      let url = `/api/bookings?date=${encodeURIComponent(dateStr)}&teacher=${teacherId}&school=${schoolId}`
       if (excludeSlot) url += `&excludeSlot=${encodeURIComponent(excludeSlot)}`
       const res = await fetch(url)
       const data = await res.json()
@@ -113,7 +211,7 @@ export default function HomePage() {
     } finally {
       setLoadingSlots(false)
     }
-  }, [])
+  }, [teacherId, schoolId])
 
   const resetForm = (skipReload = false) => {
     const wasEditing = editingOldSlot !== null
@@ -128,7 +226,6 @@ export default function HomePage() {
     setNote('')
     setChatNote('')
     setResult(null)
-    // 変更モードから抜けた場合、バッファを正しく適用したスロットに戻す
     if (!skipReload && wasEditing && selectedDate) loadSlots(selectedDate)
   }
 
@@ -166,7 +263,6 @@ export default function HomePage() {
     setChatNote(extractNoteFromCell(found.booked!, '雑談'))
     setVerifyError('')
     setFormMode('edit')
-    // 変更元スロットのバッファを除外して再読み込み
     if (selectedDate) loadSlots(selectedDate, oldSlot)
   }
 
@@ -178,6 +274,8 @@ export default function HomePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          teacherId,
+          schoolId,
           date: formatDateForSheet(selectedDate),
           slot: selectedSlot,
           studentName,
@@ -205,6 +303,8 @@ export default function HomePage() {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          teacherId,
+          schoolId,
           date: formatDateForSheet(selectedDate),
           oldSlot: editingOldSlot,
           newSlot: selectedSlot,
@@ -234,6 +334,7 @@ export default function HomePage() {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          teacherId,
           date: formatDateForSheet(selectedDate),
           slot: editingOldSlot,
           studentName,
@@ -257,7 +358,7 @@ export default function HomePage() {
     setCheckLoading(true)
     setCheckResult(null)
     try {
-      const res = await fetch(`/api/bookings/lookup?name=${encodeURIComponent(name)}`)
+      const res = await fetch(`/api/bookings/lookup?name=${encodeURIComponent(name)}&teacher=${teacherId}`)
       const data = await res.json()
       setCheckResult(data.bookings || [])
     } catch {
@@ -271,10 +372,16 @@ export default function HomePage() {
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-4">
+          <button onClick={onBack} className="flex items-center gap-1 text-xs text-gray-400 mb-1.5 hover:text-gray-600">
+            ‹ 先生を変更
+          </button>
           <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
-          <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
-            EIMEI予備校面談予約システム
-          </h1>
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
+              {teacherName} 先生
+            </h1>
+            <span className="text-xs text-gray-400">{schoolName}</span>
+          </div>
         </div>
       </header>
 
@@ -378,7 +485,7 @@ export default function HomePage() {
           </section>
         )}
 
-        {/* 名前確認フォーム（変更前） */}
+        {/* 名前確認フォーム */}
         {formMode === 'verify' && (
           <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
             <h2 className="text-sm font-semibold text-gray-700 mb-1">予約の変更・キャンセル</h2>
@@ -405,7 +512,7 @@ export default function HomePage() {
           </section>
         )}
 
-        {/* 新規予約フォーム / 変更フォーム */}
+        {/* 新規予約 / 変更フォーム */}
         {(formMode === 'new' && selectedSlot) || formMode === 'edit' ? (
           <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
             <div className="flex items-center justify-between mb-3">
@@ -561,5 +668,39 @@ export default function HomePage() {
         </section>
       </main>
     </div>
+  )
+}
+
+// ── ルートコンポーネント ───────────────────────────────
+export default function HomePage() {
+  const [schoolId, setSchoolId] = useState<SchoolId | null>(null)
+  const [teacherId, setTeacherId] = useState<string | null>(null)
+
+  if (!schoolId) {
+    return <SchoolSelect onSelect={setSchoolId} />
+  }
+
+  if (!teacherId) {
+    return (
+      <TeacherSelect
+        schoolId={schoolId}
+        onSelect={setTeacherId}
+        onBack={() => setSchoolId(null)}
+      />
+    )
+  }
+
+  const teacher = TEACHERS.find(t => t.id === teacherId)!
+  const school = SCHOOLS.find(s => s.id === schoolId)!
+
+  return (
+    <BookingPage
+      teacherId={teacherId}
+      schoolId={schoolId}
+      teacherName={teacher.name}
+      schoolName={school.name}
+      weekStartDay={teacher.weekStartDay}
+      onBack={() => setTeacherId(null)}
+    />
   )
 }
