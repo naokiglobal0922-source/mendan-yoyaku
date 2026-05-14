@@ -116,8 +116,9 @@ function TeacherSelect({
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100">
         <div className="max-w-lg mx-auto px-4 py-4">
-          <button onClick={onBack} className="flex items-center gap-1 text-xs text-gray-400 mb-2 hover:text-gray-600">
-            ‹ 校舎選択に戻る
+          <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-full px-3 py-1.5 mb-3 transition-all">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11L5 7l4-4"/></svg>
+            校舎選択に戻る
           </button>
           <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
           <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
@@ -372,8 +373,9 @@ function BookingPage({
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-lg mx-auto px-4 py-4">
-          <button onClick={onBack} className="flex items-center gap-1 text-xs text-gray-400 mb-1.5 hover:text-gray-600">
-            ‹ 先生を変更
+          <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-full px-3 py-1.5 mb-3 transition-all">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11L5 7l4-4"/></svg>
+            先生を変更
           </button>
           <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
           <div className="flex items-baseline gap-2">
