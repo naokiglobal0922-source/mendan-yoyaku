@@ -253,8 +253,9 @@ export async function getSlotStatusForDate(
   spreadsheetId: string,
   dateStr: string,
   excludeSlot?: string,
-  schoolId?: string
-): Promise<{ slot: string; booked: string | null }[]> {
+  schoolId?: string,
+  debug?: boolean
+): Promise<{ slot: string; booked: string | null; _debug?: unknown }[]> {
   const sheets = await getSheetsClient()
   const colMap = await getColumnMap(spreadsheetId)
   const rowIndex = await findDateRow(spreadsheetId, dateStr)
@@ -333,34 +334,34 @@ export async function getSlotStatusForDate(
     const colIdx = colMap[slot]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const debugInfo = debug ? { colIdx, cellValue, bg: colIdx !== undefined ? (cells[colIdx] as any)?.effectiveFormat?.backgroundColor : null, isYellow: colIdx !== undefined ? isCellYellow(colIdx) : false, isDayYellow, schoolId } : undefined
+
     if (cellValue) {
-      // 別の学校の予約は「存在しない」として空き扱い
-      if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null }
-      return { slot, booked: cellValue }
+      if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null, _debug: debugInfo }
+      return { slot, booked: cellValue, _debug: debugInfo }
     }
 
     if (colIdx !== undefined && isCellGrey(colIdx)) {
-      return { slot, booked: '__blocked__' }
+      return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
-    // 空セルでも他校専用セルはブロック（例: 鶴瀬から見た黄色セル＝ふじみ野専用）
     if (colIdx !== undefined && isOtherSchoolCell(colIdx)) {
-      return { slot, booked: '__blocked__' }
+      return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
-    // 日付セルが他校色の場合、その日の全スロットをブロック
-    if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__' }
-    if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__' }
+    if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__', _debug: debugInfo }
+    if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__', _debug: debugInfo }
 
     const slotMins = timeToMinutes(slot)
 
     const conflictsAhead = occupied.some(({ mins: t }) => slotMins < t && t < slotMins + 30)
-    if (conflictsAhead) return { slot, booked: '__blocked__' }
+    if (conflictsAhead) return { slot, booked: '__blocked__', _debug: debugInfo }
 
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
-    if (isBlocked) return { slot, booked: '__blocked__' }
+    if (isBlocked) return { slot, booked: '__blocked__', _debug: debugInfo }
 
-    return { slot, booked: null }
+    return { slot, booked: null, _debug: debugInfo }
   })
 }
 
