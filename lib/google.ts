@@ -347,8 +347,9 @@ export async function getSlotStatusForDate(
       if (isWhiteOrDefaultBackground(bg)) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
-    // 原口: 20:00未満は水色のみ予約可（夜間スロット22:15等は通常ルール）
-    if (teacherId === 'haraguchi' && colIdx !== undefined && timeToMinutes(slot) < 20 * 60) {
+    // 原口: 全時間帯で水色のみ予約可
+    if (teacherId === 'haraguchi') {
+      if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
       if (!isCellCyan(colIdx)) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
