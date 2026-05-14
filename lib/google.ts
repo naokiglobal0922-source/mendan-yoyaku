@@ -322,9 +322,12 @@ export async function getSlotStatusForDate(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const debugInfo = debug ? { colIdx, cellValue, bg: colIdx !== undefined ? (cells[colIdx] as any)?.effectiveFormat?.backgroundColor : null, isYellow: colIdx !== undefined ? isCellYellow(colIdx) : false, isDayYellow, schoolId } : undefined
 
-    // 予約済み（他校専用セルは表示しない）
+    // 予約済み
     if (cellValue) {
       if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null, _debug: debugInfo }
+      // アプリ経由の予約のみ「予約不可」表示、手動入力は非表示（__blocked__）
+      const isAppBooking = /（(2者面談|3者面談)）/.test(cellValue)
+      if (!isAppBooking) return { slot, booked: '__blocked__', _debug: debugInfo }
       return { slot, booked: cellValue, _debug: debugInfo }
     }
 
