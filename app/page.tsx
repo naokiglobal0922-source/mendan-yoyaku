@@ -434,32 +434,32 @@ function BookingPage({
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-2 mb-4">
-                  {slots.map(({ slot, booked }) => {
+                  {slots.filter(({ booked }) => booked !== '__blocked__').map(({ slot, booked }) => {
                     const isToday = selectedDate?.toDateString() === today.toDateString()
-                    const isPastSlot = isToday && (() => {
+                    const isPastSlot = !booked && isToday && (() => {
                       const [h, m] = slot.split(':').map(Number)
                       return h * 60 + m <= today.getHours() * 60 + today.getMinutes()
                     })()
-                    const effectiveBooked = booked || (isPastSlot && !booked ? '__blocked__' : null)
-                    const isMoveDest = formMode === 'edit' && !effectiveBooked && slot !== editingOldSlot
+                    const isUnavailable = !!booked || isPastSlot
+                    const isMoveDest = formMode === 'edit' && !isUnavailable && slot !== editingOldSlot
                     const isCurrentEdit = formMode === 'edit' && slot === editingOldSlot
                     const isNewSelected = formMode === 'new' && selectedSlot === slot
                     const isMoveSelected = formMode === 'edit' && selectedSlot === slot && slot !== editingOldSlot
 
                     return (
                       <button key={slot}
-                        disabled={!!effectiveBooked && formMode !== 'edit'}
+                        disabled={isUnavailable && formMode !== 'edit'}
                         onClick={() => {
-                          if (formMode === 'edit' && !effectiveBooked) {
+                          if (formMode === 'edit' && !isUnavailable) {
                             setSelectedSlot(slot)
-                          } else if (!effectiveBooked && formMode !== 'edit') {
+                          } else if (!isUnavailable && formMode !== 'edit') {
                             setFormMode('new')
                             setSelectedSlot(s => s === slot ? null : slot)
                             setResult(null)
                           }
                         }}
                         className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                          effectiveBooked
+                          isUnavailable
                             ? isCurrentEdit
                               ? 'bg-orange-400 text-white ring-2 ring-orange-300'
                               : 'bg-gray-100 text-gray-300 cursor-not-allowed'
@@ -472,7 +472,7 @@ function BookingPage({
                               : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
                         }`}>
                         {slot}
-                        {effectiveBooked ? (
+                        {isUnavailable ? (
                           <span className="block text-[9px] mt-0.5 text-gray-400">予約不可</span>
                         ) : isMoveDest ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>

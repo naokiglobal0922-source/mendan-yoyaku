@@ -247,12 +247,6 @@ export async function findBookingsByName(spreadsheetId: string, name: string): P
   return results
 }
 
-// 予約可能時間枠の定義
-export const BOOKABLE_SLOTS = [
-  '15:00', '15:15', '15:30', '15:45',
-  '16:00', '16:15', '16:30', '22:15'
-]
-
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number)
   return h * 60 + m
@@ -270,9 +264,7 @@ export async function getSlotStatusForDate(
   const colMap = await getColumnMap(spreadsheetId)
   const rowIndex = await findDateRow(spreadsheetId, dateStr)
 
-  if (rowIndex < 0) {
-    return BOOKABLE_SLOTS.map(slot => ({ slot, booked: null }))
-  }
+  if (rowIndex < 0) return []
 
   const lastCol = colIndexToLetter(Object.keys(colMap).length + 2)
   const res = await sheets.spreadsheets.get({
@@ -282,8 +274,6 @@ export async function getSlotStatusForDate(
   })
   const cells = res.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || []
 
-  // 日付セル（A列=index0）またはB列の色で「その日全体」の学校制限を判定
-  // 個別のタイムスロットセルではなく日付行全体が着色されている場合に対応
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dateCellBg = (cells[0] as any)?.effectiveFormat?.backgroundColor
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -299,26 +289,23 @@ export async function getSlotStatusForDate(
   const isCellCyan = (colIdx: number): boolean => isCyanBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellYellow = (colIdx: number): boolean => isYellowBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
-  // このschoolから見て「別の学校専用セル」かどうか
-  // 鶴瀬から見る場合: 黄色=ふじみ野専用 → 無視
-  // ふじみ野から見る場合: 水色=鶴瀬専用 → 無視
+
   const isOtherSchoolCell = (colIdx: number): boolean => {
     if (schoolId === 'tsuruse') return isCellYellow(colIdx)
     if (schoolId === 'fujimino') return isCellCyan(colIdx)
     return false
   }
 
-  const isExtraSlotCell = (colIdx: number): boolean => {
-    if (schoolId === 'fujimino') return isCellYellow(colIdx)
-    return isCellCyan(colIdx)
-  }
+  // スプレッドシートの全時間列を取得（デフォルトリストなし）
+  const allSlots = Object.keys(colMap)
+    .filter(h => /^\d{1,2}:\d{2}$/.test(h))
+    .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
 
-  // 別の学校のセルは occupied 計算から除外する（時間ブロックに影響させない）
+  // 他校専用セルや休みセルを除いた予約済み一覧（時間ブロック計算用）
   const occupied: { mins: number; buffer: number }[] = []
-  Object.entries(colMap).forEach(([header, colIdx]) => {
-    if (!header.includes(':')) return
+  allSlots.forEach(header => {
     if (header === excludeSlot) return
-    const idx = colIdx as number
+    const idx = colMap[header]
     const val = getCellValue(idx)
     if (!val) return
     if (isCellGrey(idx)) return
@@ -327,19 +314,6 @@ export async function getSlotStatusForDate(
     occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
   })
 
-  const extraSlots: string[] = []
-  Object.entries(colMap).forEach(([header, colIdx]) => {
-    if (!header.includes(':')) return
-    const idx = colIdx as number
-    if (getCellValue(idx)) return
-    if (!isExtraSlotCell(idx)) return
-    if (!BOOKABLE_SLOTS.includes(header)) extraSlots.push(header)
-  })
-
-  const allSlots = [...BOOKABLE_SLOTS, ...extraSlots]
-    .filter((v, i, a) => a.indexOf(v) === i)
-    .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
-
   return allSlots.map(slot => {
     const colIdx = colMap[slot]
     const cellValue = colIdx !== undefined ? getCellValue(colIdx) : ''
@@ -347,6 +321,7 @@ export async function getSlotStatusForDate(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const debugInfo = debug ? { colIdx, cellValue, bg: colIdx !== undefined ? (cells[colIdx] as any)?.effectiveFormat?.backgroundColor : null, isYellow: colIdx !== undefined ? isCellYellow(colIdx) : false, isDayYellow, schoolId } : undefined
 
+    // 予約済み（他校専用セルは表示しない）
     if (cellValue) {
       if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null, _debug: debugInfo }
       return { slot, booked: cellValue, _debug: debugInfo }
@@ -363,16 +338,17 @@ export async function getSlotStatusForDate(
     if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__', _debug: debugInfo }
     if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__', _debug: debugInfo }
 
-    // 岡宮/原口: 白（無色）セルは面談不可。原口は水色のみ予約可。
-    if (teacherId === 'okamiya' || teacherId === 'haraguchi') {
+    // 岡宮: 全時間帯で白（無色）= 面談不可
+    if (teacherId === 'okamiya') {
       if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const bg = (cells[colIdx] as any)?.effectiveFormat?.backgroundColor
       if (isWhiteOrDefaultBackground(bg)) return { slot, booked: '__blocked__', _debug: debugInfo }
-      // 原口は水色のみ（黄色は isOtherSchoolCell で既に処理済み）
-      if (teacherId === 'haraguchi' && !isCellCyan(colIdx)) {
-        return { slot, booked: '__blocked__', _debug: debugInfo }
-      }
+    }
+
+    // 原口: 20:00未満は水色のみ予約可（夜間スロット22:15等は通常ルール）
+    if (teacherId === 'haraguchi' && colIdx !== undefined && timeToMinutes(slot) < 20 * 60) {
+      if (!isCellCyan(colIdx)) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
     const slotMins = timeToMinutes(slot)
