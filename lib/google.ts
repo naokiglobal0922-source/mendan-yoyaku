@@ -84,11 +84,12 @@ export async function updateInterviewRecord(spreadsheetId: string, name: string,
 }
 
 // セルの背景色が白（無色）かどうか判定
+// 省略チャンネルは0扱い（APIは0を省略する）
 function isWhiteOrDefaultBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return true
-  const r = color.red ?? 1
-  const g = color.green ?? 1
-  const b = color.blue ?? 1
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
   return r > 0.95 && g > 0.95 && b > 0.95
 }
 
