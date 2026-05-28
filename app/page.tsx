@@ -30,7 +30,7 @@ function getWeekDates(baseDate: Date, startDay: number = 1): Date[] {
   const diff = (day - startDay + 7) % 7
   const firstDay = new Date(baseDate)
   firstDay.setDate(baseDate.getDate() - diff)
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 6; i++) {
     const d = new Date(firstDay)
     d.setDate(firstDay.getDate() + i)
     week.push(d)
@@ -206,6 +206,8 @@ function BookingPage({
   const [checkActionResult, setCheckActionResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [checkCancelling, setCheckCancelling] = useState(false)
 
+  const [hasSaturdaySlots, setHasSaturdaySlots] = useState(false)
+
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate, weekStartDay)
@@ -226,6 +228,20 @@ function BookingPage({
       if (!silent) setLoadingSlots(false)
     }
   }, [teacherId, schoolId])
+
+  // 土曜日に空き枠があるか事前チェック
+  useEffect(() => {
+    const saturday = weekDates[5]
+    const satStr = formatDateForSheet(saturday)
+    setHasSaturdaySlots(false)
+    fetch(`/api/bookings?date=${encodeURIComponent(satStr)}&teacher=${teacherId}&school=${schoolId}`)
+      .then(r => r.json())
+      .then(data => {
+        const available = (data.slots as SlotStatus[] ?? []).some(s => s.booked === null)
+        setHasSaturdaySlots(available && !blockedDates.includes(satStr))
+      })
+      .catch(() => {})
+  }, [weekOffset, teacherId, schoolId, blockedDates])
 
   // 20秒ごとにサイレント再取得してリアルタイム反映
   useEffect(() => {
@@ -484,13 +500,13 @@ function BookingPage({
             <button onClick={() => setWeekOffset(w => w - 1)} disabled={weekOffset <= 0}
               className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 active:scale-95 text-xl disabled:opacity-30 disabled:cursor-not-allowed">‹</button>
             <span className="text-sm font-semibold text-gray-700">
-              {weekDates[0].getMonth() + 1}月{weekDates[0].getDate()}日 〜 {weekDates[4].getDate()}日
+              {weekDates[0].getMonth() + 1}月{weekDates[0].getDate()}日 〜 {hasSaturdaySlots ? weekDates[5].getDate() : weekDates[4].getDate()}日
             </span>
             <button onClick={() => setWeekOffset(w => w + 1)}
               className="w-9 h-9 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 active:scale-95 text-xl">›</button>
           </div>
-          <div className="grid grid-cols-5 gap-2">
-            {weekDates.map((date) => {
+          <div className={`grid gap-2 ${hasSaturdaySlots ? 'grid-cols-6' : 'grid-cols-5'}`}>
+            {weekDates.slice(0, hasSaturdaySlots ? 6 : 5).map((date) => {
               const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate())
               const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
               const isPast = dateMidnight <= todayMidnight
