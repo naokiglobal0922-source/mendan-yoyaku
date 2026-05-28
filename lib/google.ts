@@ -153,6 +153,19 @@ function isOrangeBackground(color?: { red?: number; green?: number; blue?: numbe
   return r > 0.85 && g > 0.4 && g < 0.82 && b < 0.3 && r > g
 }
 
+// セルの背景色が青系かどうか判定（原口の追加枠）
+function isBlueBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
+  if (r > 0.93 && g > 0.93 && b > 0.93) return false
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max - min < 0.06) return false
+  return b > r && b > g && b > 0.3
+}
+
 // セルの背景色が黄色系かどうか判定（岡宮のふじみ野枠）
 function isYellowBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
@@ -367,6 +380,8 @@ export async function getSlotStatusForDate(
   const isCellGreen = (colIdx: number): boolean => isGreenBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellOrange = (colIdx: number): boolean => isOrangeBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellBlue = (colIdx: number): boolean => isBlueBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
 
   const isOtherSchoolCell = (colIdx: number): boolean => {
     if (teacherId === 'futagami') {
@@ -473,10 +488,10 @@ export async function getSlotStatusForDate(
       if (!isAvailableColor) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
-    // 原口: 水色のみ予約可
+    // 原口: 水色または青のみ予約可
     if (teacherId === 'haraguchi') {
       if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
-      if (!isCellCyan(colIdx)) return { slot, booked: '__blocked__', _debug: debugInfo }
+      if (!isCellCyan(colIdx) && !isCellBlue(colIdx)) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
     // 二神: 校舎に応じた色のみ予約可（青=ふじみ野、緑=川越、オレンジ=両方）
