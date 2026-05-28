@@ -4,19 +4,24 @@ import { useState, useCallback, useEffect } from 'react'
 import { SCHOOLS, TEACHERS, getTeachersBySchool, type SchoolId } from '@/lib/teachers'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
-const MEETING_TYPES = ['2者面談', '3者面談']
+const MEETING_TYPES: Record<string, string[]> = {
+  default: ['２者面談（保護者のみ）', '３者面談（生徒本人も参加）'],
+  futagami: ['２者面談（保護者のみ）', '３者面談（生徒本人も参加）', '電話面談'],
+}
+// スプレッドシートの既存表記との後方互換を含む判定用正規表現
+const APP_BOOKING_RE = /（(２者面談（保護者のみ）|[２2]者面談|[３3]者面談（生徒本人も参加）|三者面談（生徒本人も参加）|電話面談)）/
 
 const TOPICS = [
   '成績・学力のこと',
   '志望校・大学の選び方',
   '受験勉強の進め方',
-  'モチベーション・やる気が上がらない',
+  'モチベーション・やる気がないように見える',
   '学習習慣が身についていない',
   '部活と勉強の両立',
   '学校生活・友人関係',
   '模試の結果・偏差値について',
   '塾の授業・カリキュラムについて',
-  '夏期・冬期講習について',
+  '各講習について',
 ]
 
 function getWeekDates(baseDate: Date, startDay: number = 1): Date[] {
@@ -51,8 +56,8 @@ function extractName(cellValue: string): string {
   return m ? m[1] : cellValue
 }
 function extractType(cellValue: string): string {
-  const m = cellValue.match(/（(.+?)）/)
-  return m ? m[1] : MEETING_TYPES[0]
+  const m = cellValue.match(APP_BOOKING_RE)
+  return m ? m[1] : MEETING_TYPES.default[0]
 }
 function extractTopicsFromCell(cellValue: string): string[] {
   const m = cellValue.match(/【話したいこと】([^\n]*)/)
@@ -62,6 +67,9 @@ function extractTopicsFromCell(cellValue: string): string[] {
 function extractNoteFromCell(cellValue: string, key: string): string {
   const m = cellValue.match(new RegExp(`【${key}】([^\\n]*)`))
   return m ? m[1].trim() : ''
+}
+function extractRelationFromCell(cellValue: string): string {
+  return extractNoteFromCell(cellValue, '本人との関係')
 }
 
 type FormMode = 'none' | 'new' | 'verify' | 'edit'
@@ -182,7 +190,10 @@ function BookingPage({
   const [verifyName, setVerifyName] = useState('')
   const [verifyError, setVerifyError] = useState('')
   const [studentName, setStudentName] = useState('')
-  const [meetingType, setMeetingType] = useState(MEETING_TYPES[0])
+  const [relation, setRelation] = useState('')
+  const meetingTypes = MEETING_TYPES[teacherId] ?? MEETING_TYPES.default
+  const [meetingType, setMeetingType] = useState(meetingTypes[0])
+  const [phoneNumber, setPhoneNumber] = useState('')
   const [selectedTopics, setSelectedTopics] = useState<string[]>([])
   const [note, setNote] = useState('')
   const [chatNote, setChatNote] = useState('')
@@ -192,14 +203,16 @@ function BookingPage({
   const [checkName, setCheckName] = useState('')
   const [checkResult, setCheckResult] = useState<{ date: string; dayOfWeek: string; slot: string; type: string }[] | null>(null)
   const [checkLoading, setCheckLoading] = useState(false)
+  const [checkActionResult, setCheckActionResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [checkCancelling, setCheckCancelling] = useState(false)
 
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate, weekStartDay)
 
-  const loadSlots = useCallback(async (date: Date, excludeSlot?: string) => {
-    setLoadingSlots(true)
-    setSlots([])
+
+  const loadSlots = useCallback(async (date: Date, excludeSlot?: string, silent = false) => {
+    if (!silent) { setLoadingSlots(true); setSlots([]) }
     const dateStr = formatDateForSheet(date)
     try {
       let url = `/api/bookings?date=${encodeURIComponent(dateStr)}&teacher=${teacherId}&school=${schoolId}`
@@ -208,11 +221,30 @@ function BookingPage({
       const data = await res.json()
       setSlots(data.slots || [])
     } catch {
-      setSlots([])
+      if (!silent) setSlots([])
     } finally {
-      setLoadingSlots(false)
+      if (!silent) setLoadingSlots(false)
     }
   }, [teacherId, schoolId])
+
+  // 20秒ごとにサイレント再取得してリアルタイム反映
+  useEffect(() => {
+    if (!selectedDate) return
+    const excludeSlot = formMode === 'edit' ? editingOldSlot ?? undefined : undefined
+    const id = setInterval(() => loadSlots(selectedDate, excludeSlot, true), 20000)
+    return () => clearInterval(id)
+  }, [selectedDate, formMode, editingOldSlot, loadSlots])
+
+  // ポーリング後、選択中の枠が埋まっていたらリセット
+  useEffect(() => {
+    if (formMode === 'new' && selectedSlot) {
+      const s = slots.find(s => s.slot === selectedSlot)
+      if (s && s.booked !== null) {
+        setSelectedSlot(null)
+        setResult({ ok: false, message: 'この時間枠は他の方が予約されました。別の時間をお選びください。' })
+      }
+    }
+  }, [slots, formMode, selectedSlot])
 
   const resetForm = (skipReload = false) => {
     const wasEditing = editingOldSlot !== null
@@ -222,7 +254,9 @@ function BookingPage({
     setVerifyName('')
     setVerifyError('')
     setStudentName('')
-    setMeetingType(MEETING_TYPES[0])
+    setRelation('')
+    setMeetingType(meetingTypes[0])
+    setPhoneNumber('')
     setSelectedTopics([])
     setNote('')
     setChatNote('')
@@ -241,6 +275,8 @@ function BookingPage({
 
   const buildNoteText = () =>
     [
+      relation ? `【本人との関係】${relation}` : '',
+      meetingType === '電話面談' && phoneNumber ? `【電話番号】${phoneNumber}` : '',
       selectedTopics.length ? `【話したいこと】${selectedTopics.join('、')}` : '',
       note ? `【備考】${note}` : '',
       chatNote ? `【雑談】${chatNote}` : '',
@@ -249,7 +285,9 @@ function BookingPage({
   const handleVerify = () => {
     const name = verifyName.trim()
     if (!name) { setVerifyError('名前を入力してください'); return }
-    const found = slots.find(s => s.booked && extractName(s.booked) === name)
+    const found = slots.find(s =>
+      s.booked && APP_BOOKING_RE.test(s.booked) && extractName(s.booked) === name
+    )
     if (!found) {
       setVerifyError('その名前の予約が見つかりませんでした。フルネームで入力してください')
       return
@@ -258,6 +296,7 @@ function BookingPage({
     setEditingOldSlot(oldSlot)
     setSelectedSlot(oldSlot)
     setStudentName(extractName(found.booked!))
+    setRelation(extractRelationFromCell(found.booked!))
     setMeetingType(extractType(found.booked!))
     setSelectedTopics(extractTopicsFromCell(found.booked!))
     setNote(extractNoteFromCell(found.booked!, '備考'))
@@ -336,6 +375,7 @@ function BookingPage({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           teacherId,
+          schoolId,
           date: formatDateForSheet(selectedDate),
           slot: editingOldSlot,
           studentName,
@@ -358,6 +398,7 @@ function BookingPage({
     if (!name) return
     setCheckLoading(true)
     setCheckResult(null)
+    setCheckActionResult(null)
     try {
       const res = await fetch(`/api/bookings/lookup?name=${encodeURIComponent(name)}&teacher=${teacherId}`)
       const data = await res.json()
@@ -367,6 +408,55 @@ function BookingPage({
     } finally {
       setCheckLoading(false)
     }
+  }
+
+  const handleCancelFromLookup = async (booking: { date: string; slot: string }) => {
+    if (!confirm('この予約をキャンセルしますか？')) return
+    setCheckCancelling(true)
+    setCheckActionResult(null)
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacherId, schoolId, date: booking.date, slot: booking.slot, studentName: checkName.trim() }),
+      })
+      if (res.ok) {
+        setCheckActionResult({ ok: true, message: '予約をキャンセルしました' })
+        setCheckResult(null)
+        setCheckName('')
+        if (selectedDate && formatDateForSheet(selectedDate) === booking.date) loadSlots(selectedDate)
+      } else {
+        const data = await res.json()
+        setCheckActionResult({ ok: false, message: data.error || 'キャンセルに失敗しました' })
+      }
+    } catch {
+      setCheckActionResult({ ok: false, message: '通信エラーが発生しました' })
+    } finally {
+      setCheckCancelling(false)
+    }
+  }
+
+  const handleChangeFromLookup = async (booking: { date: string; slot: string; type: string }) => {
+    const [m, d] = booking.date.split('/').map(Number)
+    const targetDate = new Date(today.getFullYear(), m - 1, d)
+    const todayWeekStart = getWeekDates(new Date(today.getFullYear(), today.getMonth(), today.getDate()), weekStartDay)[0]
+    const targetWeekStart = getWeekDates(targetDate, weekStartDay)[0]
+    const newOffset = Math.round((targetWeekStart.getTime() - todayWeekStart.getTime()) / (1000 * 60 * 60 * 24 * 7))
+    setWeekOffset(newOffset)
+    setSelectedDate(targetDate)
+    setEditingOldSlot(booking.slot)
+    setSelectedSlot(booking.slot)
+    setStudentName(checkName.trim())
+    setMeetingType(booking.type)
+    setSelectedTopics([])
+    setNote('')
+    setChatNote('')
+    setRelation('')
+    setFormMode('edit')
+    setCheckResult(null)
+    setCheckActionResult(null)
+    await loadSlots(targetDate, booking.slot)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   return (
@@ -401,7 +491,9 @@ function BookingPage({
           </div>
           <div className="grid grid-cols-5 gap-2">
             {weekDates.map((date) => {
-              const isPast = date < new Date(today.getFullYear(), today.getMonth(), today.getDate())
+              const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate())
+              const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+              const isPast = dateMidnight <= todayMidnight
               const isBlocked = blockedDates.includes(formatDateForSheet(date))
               const isDisabled = isPast || isBlocked
               const isSelected = selectedDate?.toDateString() === date.toDateString()
@@ -434,35 +526,39 @@ function BookingPage({
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-2 mb-4">
-                  {slots.filter(({ booked }) => booked !== '__blocked__').map(({ slot, booked }) => {
-                    const isToday = selectedDate?.toDateString() === today.toDateString()
-                    const isPastSlot = !booked && isToday && (() => {
-                      const [h, m] = slot.split(':').map(Number)
-                      return h * 60 + m <= today.getHours() * 60 + today.getMinutes()
-                    })()
-                    const isUnavailable = !!booked || isPastSlot
-                    const isMoveDest = formMode === 'edit' && !isUnavailable && slot !== editingOldSlot
+                  {slots.filter(({ slot, booked }) => {
+                    // 変更モード中は変更元スロットも表示
+                    if (formMode === 'edit' && slot === editingOldSlot) return true
+                    // 過去時間は非表示
+                    if (!booked) {
+                      const isToday = selectedDate?.toDateString() === today.toDateString()
+                      if (isToday) {
+                        const [h, m] = slot.split(':').map(Number)
+                        if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) return false
+                      }
+                    }
+                    // 予約可能（空き）のみ表示
+                    return booked === null
+                  }).map(({ slot }) => {
+                    const isMoveDest = formMode === 'edit' && slot !== editingOldSlot
                     const isCurrentEdit = formMode === 'edit' && slot === editingOldSlot
                     const isNewSelected = formMode === 'new' && selectedSlot === slot
                     const isMoveSelected = formMode === 'edit' && selectedSlot === slot && slot !== editingOldSlot
 
                     return (
                       <button key={slot}
-                        disabled={isUnavailable && formMode !== 'edit'}
                         onClick={() => {
-                          if (formMode === 'edit' && !isUnavailable) {
+                          if (formMode === 'edit' && !isCurrentEdit) {
                             setSelectedSlot(slot)
-                          } else if (!isUnavailable && formMode !== 'edit') {
+                          } else if (formMode !== 'edit') {
                             setFormMode('new')
                             setSelectedSlot(s => s === slot ? null : slot)
                             setResult(null)
                           }
                         }}
                         className={`py-3 rounded-xl text-sm font-bold transition-all ${
-                          isUnavailable
-                            ? isCurrentEdit
-                              ? 'bg-orange-400 text-white ring-2 ring-orange-300'
-                              : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                          isCurrentEdit
+                            ? 'bg-orange-400 text-white ring-2 ring-orange-300'
                             : isMoveSelected
                               ? 'bg-blue-600 text-white shadow-md ring-2 ring-blue-300'
                               : isMoveDest
@@ -472,9 +568,7 @@ function BookingPage({
                               : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
                         }`}>
                         {slot}
-                        {isUnavailable ? (
-                          <span className="block text-[9px] mt-0.5 text-gray-400">予約不可</span>
-                        ) : isMoveDest ? (
+                        {isMoveDest && !isMoveSelected ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
                         ) : null}
                       </button>
@@ -482,11 +576,10 @@ function BookingPage({
                   })}
                 </div>
 
-                {formMode === 'none' && slots.some(s => s.booked) && (
-                  <button onClick={() => { setFormMode('verify'); setResult(null) }}
-                    className="w-full border border-gray-200 text-gray-500 text-sm font-semibold py-3 rounded-xl hover:bg-gray-50 active:scale-[0.99] transition-all">
-                    予約の変更・キャンセルを希望する
-                  </button>
+                {formMode === 'none' && (
+                  <p className="text-xs text-gray-400 text-center pt-1">
+                    変更・キャンセルはページ下部の「予約の確認・変更・キャンセル」から行えます
+                  </p>
                 )}
               </>
             )}
@@ -553,17 +646,33 @@ function BookingPage({
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談希望 *</label>
-                <div className="flex gap-2">
-                  {MEETING_TYPES.map(t => (
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">本人との関係</label>
+                <input type="text" value={relation} onChange={e => setRelation(e.target.value)}
+                  placeholder="例：保護者（母）、本人"
+                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談希望 * <span className="font-normal text-gray-400">（所要時間：15分程度）</span></label>
+                <div className="flex flex-col gap-2">
+                  {meetingTypes.map(t => (
                     <button key={t} onClick={() => setMeetingType(t)}
-                      className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all ${
+                      className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${
                         meetingType === t ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                       {t}
                     </button>
                   ))}
                 </div>
               </div>
+
+              {meetingType === '電話面談' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">電話番号 *</label>
+                  <input type="tel" value={phoneNumber} onChange={e => setPhoneNumber(e.target.value)}
+                    placeholder="例：090-1234-5678"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-2">
@@ -615,13 +724,15 @@ function BookingPage({
               )}
 
               {formMode === 'new' ? (
-                <button onClick={handleSubmitNew} disabled={!studentName || submitting}
+                <button onClick={handleSubmitNew}
+                  disabled={!studentName || submitting || (meetingType === '電話面談' && !phoneNumber)}
                   className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all">
                   {submitting ? '送信中...' : '予約を確定する'}
                 </button>
               ) : (
                 <div className="space-y-2">
-                  <button onClick={handleSubmitEdit} disabled={!studentName || submitting}
+                  <button onClick={handleSubmitEdit}
+                    disabled={!studentName || submitting || (meetingType === '電話面談' && !phoneNumber)}
                     className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all">
                     {submitting ? '送信中...' : '変更を保存する'}
                   </button>
@@ -638,15 +749,15 @@ function BookingPage({
           </section>
         ) : null}
 
-        {/* 予約確認 */}
+        {/* 予約の確認・変更・キャンセル */}
         <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">予約確認</h2>
-          <p className="text-xs text-gray-400 mb-3">お子様のフルネームで予約内容を確認できます</p>
+          <h2 className="text-sm font-semibold text-gray-700 mb-0.5">予約の確認・変更・キャンセル</h2>
+          <p className="text-xs text-gray-400 mb-3">お子様のフルネームを入力してください</p>
           <div className="flex gap-2 mb-3">
             <input
               type="text"
               value={checkName}
-              onChange={e => { setCheckName(e.target.value); setCheckResult(null) }}
+              onChange={e => { setCheckName(e.target.value); setCheckResult(null); setCheckActionResult(null) }}
               onKeyDown={e => e.key === 'Enter' && handleCheckBooking()}
               placeholder="例：山田 太郎"
               className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
@@ -656,18 +767,39 @@ function BookingPage({
               disabled={checkLoading || !checkName.trim()}
               className="bg-gray-800 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
             >
-              {checkLoading ? '...' : '確認'}
+              {checkLoading ? '...' : '検索'}
             </button>
           </div>
+          {checkActionResult && (
+            <div className={`rounded-xl px-4 py-3 text-sm font-medium mb-2 ${checkActionResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+              {checkActionResult.message}
+            </div>
+          )}
           {checkResult !== null && (
             checkResult.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-3">予約が見つかりませんでした</p>
+              <p className="text-sm text-gray-400 text-center py-3">予約が見つかりませんでした。フルネームで入力してください</p>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-3">
                 {checkResult.map((b, i) => (
                   <div key={i} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
                     <p className="text-sm font-bold text-gray-900">{b.date}（{b.dayOfWeek}）{b.slot}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{b.type}</p>
+                    <p className="text-xs text-gray-500 mt-0.5 mb-3">{b.type}</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleChangeFromLookup(b)}
+                        disabled={checkCancelling}
+                        className="flex-1 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl disabled:opacity-40"
+                      >
+                        時間を変更する
+                      </button>
+                      <button
+                        onClick={() => handleCancelFromLookup(b)}
+                        disabled={checkCancelling}
+                        className="flex-1 py-2 border-2 border-red-200 text-red-500 text-sm font-bold rounded-xl disabled:opacity-40"
+                      >
+                        {checkCancelling ? '処理中...' : 'キャンセルする'}
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
