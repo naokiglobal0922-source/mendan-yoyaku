@@ -1,5 +1,22 @@
 import { google } from 'googleapis'
 
+const APP_BOOKING_RE = /（(２者面談（保護者のみ）|[２2]者面談|[３3]者面談（生徒本人も参加）|三者面談（生徒本人も参加）|電話面談)）/
+
+const SCHOOL_SHORT: Record<string, string> = {
+  tsuruse: '鶴瀬',
+  fujimino: 'ふじみ野',
+  kawagoe: '川越',
+}
+
+// セル値末尾の [校舎名] から schoolId を逆引き
+const SCHOOL_LABEL_TO_ID: Record<string, string> = Object.fromEntries(
+  Object.entries(SCHOOL_SHORT).map(([id, label]) => [label, id])
+)
+function extractSchoolFromCellValue(val: string): string | undefined {
+  const m = val.match(/\[(.+?)\]/)
+  return m ? SCHOOL_LABEL_TO_ID[m[1]] : undefined
+}
+
 export function getSpreadsheetId(teacherId: string): string {
   const map: Record<string, string | undefined> = {
     haraguchi: process.env.SPREADSHEET_ID_HARAGUCHI ?? process.env.SPREADSHEET_ID,
@@ -27,13 +44,17 @@ export async function getSheetsClient() {
 
 // 「面談記録シート」から生徒名簿を取得（A列）
 export async function getStudents(spreadsheetId: string): Promise<string[]> {
-  const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: '面談記録シート!A:A',
-  })
-  const rows = res.data.values || []
-  return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0)
+  try {
+    const sheets = await getSheetsClient()
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: '面談記録シート!A:A',
+    })
+    const rows = res.data.values || []
+    return rows.map(r => r[0]).filter(Boolean).filter((_: string, i: number) => i > 0)
+  } catch {
+    return []
+  }
 }
 
 // 「面談記録シート」に生徒を追加
@@ -83,16 +104,6 @@ export async function updateInterviewRecord(spreadsheetId: string, name: string,
   })
 }
 
-// セルの背景色が白（無色）かどうか判定
-// 省略チャンネルは0扱い（APIは0を省略する）
-function isWhiteOrDefaultBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
-  if (!color) return true
-  const r = color.red ?? 0
-  const g = color.green ?? 0
-  const b = color.blue ?? 0
-  return r > 0.95 && g > 0.95 && b > 0.95
-}
-
 // セルの背景色がグレー系かどうか判定
 function isGreyBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
@@ -119,6 +130,29 @@ function isCyanBackground(color?: { red?: number; green?: number; blue?: number 
   return g > r && b > r && Math.max(g, b) > 0.35
 }
 
+// セルの背景色が緑系かどうか判定（岡宮のどちらでも可枠）
+function isGreenBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
+  if (r > 0.93 && g > 0.93 && b > 0.93) return false
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  if (max - min < 0.06) return false
+  return g > r && g > b && g > 0.35
+}
+
+// セルの背景色がオレンジ系かどうか判定（二神の両校舎対応枠）
+function isOrangeBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
+  if (!color) return false
+  const r = color.red ?? 0
+  const g = color.green ?? 0
+  const b = color.blue ?? 0
+  if (r > 0.95 && g > 0.95 && b > 0.95) return false
+  return r > 0.85 && g > 0.4 && g < 0.82 && b < 0.3 && r > g
+}
+
 // セルの背景色が黄色系かどうか判定（岡宮のふじみ野枠）
 function isYellowBackground(color?: { red?: number; green?: number; blue?: number } | null): boolean {
   if (!color) return false
@@ -137,36 +171,44 @@ function isYellowBackground(color?: { red?: number; green?: number; blue?: numbe
 export async function getBlockedDates(spreadsheetId: string): Promise<string[]> {
   try {
     const sheets = await getSheetsClient()
-    const res = await sheets.spreadsheets.get({
-      spreadsheetId,
-      ranges: ['2026!A:A'],
-      includeGridData: true,
-    })
+    const [res, sheetInfo] = await Promise.all([
+      sheets.spreadsheets.get({ spreadsheetId, ranges: ['2026!A:B'], includeGridData: true }),
+      getSheetInfo(spreadsheetId),
+    ])
     const rowData = res.data.sheets?.[0]?.data?.[0]?.rowData || []
     const blocked: string[] = []
     let currentMonth = 0
 
     rowData.forEach((row, i) => {
       if (i === 0) return
-      const cell = row.values?.[0]
-      if (!cell) return
-      const cellValue = (cell.formattedValue || '').trim()
-      if (!cellValue) return
+      const cellA = row.values?.[0]
+      const cellB = row.values?.[1]
+      if (!cellA && !cellB) return
 
-      if (cellValue.includes('/')) {
-        const [m] = cellValue.split('/').map(Number)
-        currentMonth = m
-      }
+      const aVal = (cellA?.formattedValue || '').trim()
+      const bVal = (cellB?.formattedValue || '').trim()
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (!isGreyBackground(cell.effectiveFormat?.backgroundColor as any)) return
-
-      if (cellValue.includes('/')) {
-        blocked.push(cellValue)
+      if (sheetInfo.isFutagami) {
+        if (aVal && !isNaN(Number(aVal)) && Number(aVal) > 0) currentMonth = Number(aVal)
+        if (!bVal) return
+        const d = Number(bVal)
+        if (isNaN(d) || d <= 0 || currentMonth <= 0) return
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
+        blocked.push(`${currentMonth}/${d}`)
       } else {
-        const d = Number(cellValue)
-        if (!isNaN(d) && currentMonth > 0) {
-          blocked.push(`${currentMonth}/${d}`)
+        if (!aVal) return
+        if (aVal.includes('/')) {
+          const [m] = aVal.split('/').map(Number)
+          currentMonth = m
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
+        if (aVal.includes('/')) {
+          blocked.push(aVal)
+        } else {
+          const d = Number(aVal)
+          if (!isNaN(d) && currentMonth > 0) blocked.push(`${currentMonth}/${d}`)
         }
       }
     })
@@ -184,37 +226,51 @@ export async function getBookings(spreadsheetId: string): Promise<{
   slots: Record<string, string>
 }[]> {
   const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: '2026!A:AM',
-  })
+  const [res, sheetInfo] = await Promise.all([
+    sheets.spreadsheets.values.get({ spreadsheetId, range: '2026!A:AM' }),
+    getSheetInfo(spreadsheetId),
+  ])
   const rows = res.data.values || []
   if (rows.length === 0) return []
 
   const headers = rows[0]
+  const { isFutagami, dayOfWeekCol } = sheetInfo
+  const timeStartCol = isFutagami ? 3 : 2
   const result = []
   let currentMonth = 0
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i]
-    if (!row || !row[0]) continue
-    const rawDate = row[0].toString().trim()
+    if (!row) continue
 
-    let dateStr = rawDate
-    if (rawDate.includes('/')) {
-      const [m] = rawDate.split('/').map(Number)
-      currentMonth = m
+    let dateStr = ''
+    if (isFutagami) {
+      const a = (row[0] ?? '').toString().trim()
+      const b = (row[1] ?? '').toString().trim()
+      if (!b) continue
+      if (a && !isNaN(Number(a)) && Number(a) > 0) currentMonth = Number(a)
+      if (!currentMonth) continue
+      dateStr = `${currentMonth}/${b}`
     } else {
-      const d = Number(rawDate)
-      if (!isNaN(d) && currentMonth > 0) dateStr = `${currentMonth}/${d}`
+      if (!row[0]) continue
+      const rawDate = row[0].toString().trim()
+      if (rawDate.includes('/')) {
+        const [m] = rawDate.split('/').map(Number)
+        currentMonth = m
+        dateStr = rawDate
+      } else {
+        const d = Number(rawDate)
+        if (!isNaN(d) && currentMonth > 0) dateStr = `${currentMonth}/${d}`
+        else continue
+      }
     }
 
     const slots: Record<string, string> = {}
-    for (let j = 2; j < headers.length; j++) {
+    for (let j = timeStartCol; j < headers.length; j++) {
       const timeHeader = headers[j]
       if (timeHeader && row[j]) slots[timeHeader] = row[j]
     }
-    result.push({ date: dateStr, dayOfWeek: row[1] || '', slots })
+    result.push({ date: dateStr, dayOfWeek: row[dayOfWeekCol] || '', slots })
   }
   return result
 }
@@ -231,9 +287,10 @@ export async function findBookingsByName(spreadsheetId: string, name: string): P
 
   for (const { date, dayOfWeek, slots } of bookings) {
     for (const [slot, cellValue] of Object.entries(slots)) {
-      const m = cellValue.match(/^(.+?)（(.+?)）/)
-      if (m && m[1] === name) {
-        results.push({ date, dayOfWeek, slot, type: m[2] })
+      const nameMatch = cellValue.match(/^(.+?)（/)
+      const typeMatch = APP_BOOKING_RE.exec(cellValue)
+      if (nameMatch && typeMatch && nameMatch[1] === name) {
+        results.push({ date, dayOfWeek, slot, type: typeMatch[1] })
       }
     }
   }
@@ -262,8 +319,11 @@ export async function getSlotStatusForDate(
   debug?: boolean
 ): Promise<{ slot: string; booked: string | null; _debug?: unknown }[]> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap(spreadsheetId)
-  const rowIndex = await findDateRow(spreadsheetId, dateStr)
+  const [sheetInfo, rowIndex] = await Promise.all([
+    getSheetInfo(spreadsheetId),
+    findDateRow(spreadsheetId, dateStr),
+  ])
+  const { colMap, dayOfWeekCol } = sheetInfo
 
   if (rowIndex < 0) return []
 
@@ -278,12 +338,24 @@ export async function getSlotStatusForDate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dateCellBg = (cells[0] as any)?.effectiveFormat?.backgroundColor
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const dayOfWeekCellBg = (cells[1] as any)?.effectiveFormat?.backgroundColor
+  const dayOfWeekCellBg = (cells[dayOfWeekCol] as any)?.effectiveFormat?.backgroundColor
   const isDayYellow = isYellowBackground(dateCellBg) || isYellowBackground(dayOfWeekCellBg)
   const isDayCyan = isCyanBackground(dateCellBg) || isCyanBackground(dayOfWeekCellBg)
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const getCellValue = (colIdx: number): string => (cells[colIdx] as any)?.formattedValue || ''
+  // 予約書き込み時に背景を赤に変えているため、メモから元の背景色を復元する
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getCellOriginalBg = (colIdx: number): { red?: number; green?: number; blue?: number } | null => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const noteStr: string = (cells[colIdx] as any)?.note ?? ''
+      if (!noteStr) return null
+      const parsed = JSON.parse(noteStr)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (parsed as any).bg ?? parsed
+    } catch { return null }
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellGrey = (colIdx: number): boolean => isGreyBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -291,7 +363,21 @@ export async function getSlotStatusForDate(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isCellYellow = (colIdx: number): boolean => isYellowBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellGreen = (colIdx: number): boolean => isGreenBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const isCellOrange = (colIdx: number): boolean => isOrangeBackground((cells[colIdx] as any)?.effectiveFormat?.backgroundColor)
+
   const isOtherSchoolCell = (colIdx: number): boolean => {
+    if (teacherId === 'futagami') {
+      // オレンジ=両校舎 → どちらからでも予約可
+      if (isCellOrange(colIdx)) return false
+      // 水色=ふじみ野のみ、緑=川越のみ
+      if (schoolId === 'fujimino') return isCellGreen(colIdx)
+      if (schoolId === 'kawagoe') return isCellCyan(colIdx)
+      return false
+    }
+    if (isCellGreen(colIdx)) return false       // 緑はどちらの校舎でも予約可（岡宮）
     if (schoolId === 'tsuruse') return isCellYellow(colIdx)
     if (schoolId === 'fujimino') return isCellCyan(colIdx)
     return false
@@ -302,7 +388,7 @@ export async function getSlotStatusForDate(
     .filter(h => /^\d{1,2}:\d{2}$/.test(h))
     .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
 
-  // 他校専用セルや休みセルを除いた予約済み一覧（時間ブロック計算用）
+  // 予約済み一覧（バッファ計算用）
   const occupied: { mins: number; buffer: number }[] = []
   allSlots.forEach(header => {
     if (header === excludeSlot) return
@@ -310,9 +396,44 @@ export async function getSlotStatusForDate(
     const val = getCellValue(idx)
     if (!val) return
     if (isCellGrey(idx)) return
-    if (isOtherSchoolCell(idx)) return
-    const isAppBooking = /（(2者面談|3者面談)）/.test(val)
-    occupied.push({ mins: timeToMinutes(header), buffer: isAppBooking ? 30 : 45 })
+    const isAppBooking = APP_BOOKING_RE.test(val)
+
+    if (isAppBooking && (teacherId === 'futagami' || teacherId === 'okamiya')) {
+      // 予約済みセルは背景が赤になっているため、メモから元の背景色を復元して校舎判定
+      const origBg = getCellOriginalBg(idx)
+      const origOrange = origBg ? isOrangeBackground(origBg) : false
+      const origGreen  = origBg ? isGreenBackground(origBg)  : false
+      const origCyan   = origBg ? isCyanBackground(origBg)   : false
+      const origYellow = origBg ? isYellowBackground(origBg) : false
+
+      // 両校舎セル（二神オレンジ / 岡宮緑）
+      const origBothSchools =
+        (teacherId === 'futagami' && origOrange) ||
+        (teacherId === 'okamiya'  && origGreen)
+
+      // 他校専用セル
+      const origOtherSchool = teacherId === 'futagami'
+        ? (!origOrange && (schoolId === 'fujimino' ? origGreen : schoolId === 'kawagoe' ? origCyan : false))
+        : (!origGreen  && (schoolId === 'tsuruse'  ? origYellow : schoolId === 'fujimino' ? origCyan : false))
+
+      if (origOtherSchool) {
+        occupied.push({ mins: timeToMinutes(header), buffer: 60 })
+        return
+      }
+      if (origBothSchools) {
+        const bookingSchool = extractSchoolFromCellValue(val)
+        occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? 30 : 60 })
+        return
+      }
+      // 同校舎セル or 元色不明（origBg=null）→ セル値の校舎ラベルで判定、なければ保守的に60分
+      const bookingSchool = extractSchoolFromCellValue(val)
+      occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? 30 : 60 })
+      return
+    }
+
+    // futagami/okamiya 以外、または手動入力
+    if (isOtherSchoolCell(idx) && isAppBooking) return  // 他校アプリ予約は除外
+    occupied.push({ mins: timeToMinutes(header), buffer: 30 })
   })
 
   return allSlots.map(slot => {
@@ -324,10 +445,13 @@ export async function getSlotStatusForDate(
 
     // 予約済み
     if (cellValue) {
-      if (colIdx !== undefined && isOtherSchoolCell(colIdx)) return { slot, booked: null, _debug: debugInfo }
-      // アプリ経由の予約のみ「予約不可」表示、手動入力は非表示（__blocked__）
-      const isAppBooking = /（(2者面談|3者面談)）/.test(cellValue)
-      if (!isAppBooking) return { slot, booked: '__blocked__', _debug: debugInfo }
+      if (colIdx !== undefined && isOtherSchoolCell(colIdx)) {
+        // 他校のアプリ予約は非表示（空き扱い）、手動入力は全校からブロック
+        const isAppBooking = APP_BOOKING_RE.test(cellValue)
+        if (isAppBooking) return { slot, booked: null, _debug: debugInfo }
+        return { slot, booked: '__blocked__', _debug: debugInfo }
+      }
+      // 自校のセル: アプリ予約・手動入力ともにそのまま返す（キャンセル可）
       return { slot, booked: cellValue, _debug: debugInfo }
     }
 
@@ -342,23 +466,30 @@ export async function getSlotStatusForDate(
     if (schoolId === 'tsuruse' && isDayYellow) return { slot, booked: '__blocked__', _debug: debugInfo }
     if (schoolId === 'fujimino' && isDayCyan) return { slot, booked: '__blocked__', _debug: debugInfo }
 
-    // 岡宮: 全時間帯で白（無色）= 面談不可
+    // 岡宮: 黄・水色・緑のいずれかのみ予約可（それ以外はすべて面談不可）
     if (teacherId === 'okamiya') {
       if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const bg = (cells[colIdx] as any)?.effectiveFormat?.backgroundColor
-      if (isWhiteOrDefaultBackground(bg)) return { slot, booked: '__blocked__', _debug: debugInfo }
+      const isAvailableColor = isCellYellow(colIdx) || isCellCyan(colIdx) || isCellGreen(colIdx)
+      if (!isAvailableColor) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
-    // 原口: 全時間帯で水色のみ予約可
+    // 原口: 水色のみ予約可
     if (teacherId === 'haraguchi') {
       if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
       if (!isCellCyan(colIdx)) return { slot, booked: '__blocked__', _debug: debugInfo }
     }
 
+    // 二神: 校舎に応じた色のみ予約可（青=ふじみ野、緑=川越、オレンジ=両方）
+    if (teacherId === 'futagami') {
+      if (colIdx === undefined) return { slot, booked: '__blocked__', _debug: debugInfo }
+      const orange = isCellOrange(colIdx)
+      if (schoolId === 'fujimino' && !isCellCyan(colIdx) && !orange) return { slot, booked: '__blocked__', _debug: debugInfo }
+      if (schoolId === 'kawagoe' && !isCellGreen(colIdx) && !orange) return { slot, booked: '__blocked__', _debug: debugInfo }
+    }
+
     const slotMins = timeToMinutes(slot)
 
-    const conflictsAhead = occupied.some(({ mins: t }) => slotMins < t && t < slotMins + 30)
+    const conflictsAhead = occupied.some(({ mins: t, buffer }) => slotMins < t && t < slotMins + buffer)
     if (conflictsAhead) return { slot, booked: '__blocked__', _debug: debugInfo }
 
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
@@ -368,42 +499,76 @@ export async function getSlotStatusForDate(
   })
 }
 
-async function getColumnMap(spreadsheetId: string): Promise<Record<string, number>> {
+interface SheetInfo {
+  colMap: Record<string, number>
+  dayOfWeekCol: number  // column index for weekday (1 = standard, 2 = futagami)
+  isFutagami: boolean
+}
+
+async function getSheetInfo(spreadsheetId: string): Promise<SheetInfo> {
   const sheets = await getSheetsClient()
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: '2026!1:1',
   })
   const headers = (res.data.values || [[]])[0]
-  const map: Record<string, number> = {}
+
+  // Futagami format: header[1] is "2026" (year), so time slots start at col D (index 3)
+  const isFutagami = /^\d{4}$/.test((headers[1] || '').toString().trim())
+
+  const colMap: Record<string, number> = {}
   headers.forEach((h: string, i: number) => {
-    if (h) map[h] = i
+    if (h) colMap[h] = i
   })
-  return map
+
+  return { colMap, dayOfWeekCol: isFutagami ? 2 : 1, isFutagami }
+}
+
+// Keep backward-compat wrapper
+async function getColumnMap(spreadsheetId: string): Promise<Record<string, number>> {
+  return (await getSheetInfo(spreadsheetId)).colMap
 }
 
 async function findDateRow(spreadsheetId: string, dateStr: string): Promise<number> {
   const sheets = await getSheetsClient()
+  const [targetMonth, targetDay] = dateStr.split('/').map(Number)
+
+  // Read A:B to support futagami format (month in A, day in B)
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: '2026!A:A',
+    range: '2026!A:B',
   })
   const rows = res.data.values || []
 
-  const [targetMonth, targetDay] = dateStr.split('/').map(Number)
+  // Detect format: futagami has a numeric value in col B of data rows
+  let isFutagami = false
+  for (let i = 1; i < rows.length; i++) {
+    const b = (rows[i]?.[1] ?? '').toString().trim()
+    if (b !== '') {
+      isFutagami = !isNaN(Number(b)) && Number(b) > 0
+      break
+    }
+  }
 
   let currentMonth = 0
   for (let i = 0; i < rows.length; i++) {
-    const cell = (rows[i]?.[0] ?? '').toString().trim()
-    if (!cell) continue
+    const a = (rows[i]?.[0] ?? '').toString().trim()
+    const b = (rows[i]?.[1] ?? '').toString().trim()
 
-    if (cell.includes('/')) {
-      const [m, d] = cell.split('/').map(Number)
-      currentMonth = m
-      if (m === targetMonth && d === targetDay) return i
+    if (isFutagami) {
+      if (a && !isNaN(Number(a)) && Number(a) > 0) currentMonth = Number(a)
+      const d = Number(b)
+      if (!isNaN(d) && d > 0 && currentMonth === targetMonth && d === targetDay) return i
     } else {
-      const d = Number(cell)
-      if (!isNaN(d) && currentMonth === targetMonth && d === targetDay) return i
+      if (!a) continue
+      if (a.includes('/')) {
+        const [m, d] = a.split('/').map(Number)
+        currentMonth = m
+        if (m === targetMonth && d === targetDay) return i
+      } else {
+        const d = Number(a)
+        if (!isNaN(d) && currentMonth === targetMonth && d === targetDay) return i
+      }
     }
   }
   return -1
@@ -420,39 +585,46 @@ function colIndexToLetter(index: number): string {
   return letter
 }
 
-async function setCellBackground(
-  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
+type RgbColor = { red?: number; green?: number; blue?: number }
+
+async function getSheet2026Id(spreadsheetId: string): Promise<number> {
+  const sheets = await getSheetsClient()
+  const res = await sheets.spreadsheets.get({ spreadsheetId })
+  const sheet = res.data.sheets?.find(s => s.properties?.title === '2026')
+  return sheet?.properties?.sheetId ?? 0
+}
+
+async function updateCellColorAndNote(
   spreadsheetId: string,
   sheetId: number,
   rowIndex: number,
-  colIndex: number
+  colIndex: number,
+  bgColor: RgbColor | null,
+  note: string
 ): Promise<void> {
+  const sheets = await getSheetsClient()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellData: Record<string, any> = { note }
+  const fields: string[] = ['note']
+  if (bgColor !== null) {
+    cellData.userEnteredFormat = { backgroundColor: bgColor }
+    fields.push('userEnteredFormat.backgroundColor')
+  }
   await sheets.spreadsheets.batchUpdate({
     spreadsheetId,
     requestBody: {
       requests: [{
         updateCells: {
-          rows: [{
-            values: [{
-              userEnteredFormat: {
-                backgroundColor: { red: 1, green: 0.4, blue: 0.4 },
-              },
-            }],
-          }],
-          fields: 'userEnteredFormat.backgroundColor',
-          start: { sheetId, rowIndex, columnIndex: colIndex },
-        },
-      }],
-    },
+          range: { sheetId, startRowIndex: rowIndex, endRowIndex: rowIndex + 1, startColumnIndex: colIndex, endColumnIndex: colIndex + 1 },
+          rows: [{ values: [cellData] }],
+          fields: fields.join(','),
+        }
+      }]
+    }
   })
 }
 
-async function getSheetId(spreadsheetId: string, sheetName: string): Promise<number> {
-  const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.get({ spreadsheetId })
-  const sheet = res.data.sheets?.find(s => s.properties?.title === sheetName)
-  return sheet?.properties?.sheetId ?? 0
-}
+const BOOKED_COLOR: RgbColor = { red: 0.918, green: 0.4, blue: 0.4 }
 
 export async function writeBooking(
   spreadsheetId: string,
@@ -460,74 +632,83 @@ export async function writeBooking(
   slot: string,
   studentName: string,
   meetingType: string,
-  noteText?: string
+  schoolId?: string
 ): Promise<void> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap(spreadsheetId)
-  const rowIndex = await findDateRow(spreadsheetId, dateStr)
+  const [colMap, rowIndex] = await Promise.all([
+    getColumnMap(spreadsheetId),
+    findDateRow(spreadsheetId, dateStr),
+  ])
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
   const colIndex = colMap[slot]
   if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
-  const base = `${studentName}（${meetingType}）`
-  const cellValue = noteText ? `${base}\n${noteText}` : base
+  // 元の背景色を読み取り
+  const cellRange = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
+  const [cellRes, sheetId] = await Promise.all([
+    sheets.spreadsheets.get({ spreadsheetId, ranges: [cellRange], includeGridData: true }),
+    getSheet2026Id(spreadsheetId),
+  ])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const originalBg: RgbColor = (cellRes.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0] as any)?.effectiveFormat?.backgroundColor ?? {}
+
+  const schoolLabel = schoolId ? SCHOOL_SHORT[schoolId] : null
+  const cellValue = schoolLabel
+    ? `${studentName}（${meetingType}）[${schoolLabel}]`
+    : `${studentName}（${meetingType}）`
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
+    range: cellRange,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [[cellValue]] },
   })
 
-  const sheetId = await getSheetId(spreadsheetId, '2026')
-  await setCellBackground(sheets, spreadsheetId, sheetId, rowIndex, colIndex)
+  // 元の背景色と校舎IDをメモに保存し、赤背景を設定
+  const noteContent = schoolId
+    ? JSON.stringify({ bg: originalBg, school: schoolId })
+    : JSON.stringify(originalBg)
+  await updateCellColorAndNote(spreadsheetId, sheetId, rowIndex, colIndex, BOOKED_COLOR, noteContent)
 }
 
-async function clearCellBackground(
-  sheets: Awaited<ReturnType<typeof getSheetsClient>>,
-  spreadsheetId: string,
-  sheetId: number,
-  rowIndex: number,
-  colIndex: number
-): Promise<void> {
-  await sheets.spreadsheets.batchUpdate({
-    spreadsheetId,
-    requestBody: {
-      requests: [{
-        updateCells: {
-          rows: [{
-            values: [{
-              userEnteredFormat: {
-                backgroundColor: { red: 1, green: 1, blue: 1 },
-              },
-            }],
-          }],
-          fields: 'userEnteredFormat.backgroundColor',
-          start: { sheetId, rowIndex, columnIndex: colIndex },
-        },
-      }],
-    },
-  })
-}
 
 export async function cancelBooking(spreadsheetId: string, dateStr: string, slot: string): Promise<void> {
   const sheets = await getSheetsClient()
-  const colMap = await getColumnMap(spreadsheetId)
-  const rowIndex = await findDateRow(spreadsheetId, dateStr)
+  const [colMap, rowIndex] = await Promise.all([
+    getColumnMap(spreadsheetId),
+    findDateRow(spreadsheetId, dateStr),
+  ])
   if (rowIndex < 0) throw new Error(`日付 ${dateStr} が見つかりません`)
 
   const colIndex = colMap[slot]
   if (colIndex === undefined) throw new Error(`列 ${slot} が見つかりません`)
 
+  const cellRange = `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`
+  const [cellRes, sheetId] = await Promise.all([
+    sheets.spreadsheets.get({ spreadsheetId, ranges: [cellRange], includeGridData: true }),
+    getSheet2026Id(spreadsheetId),
+  ])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cellNote: string = (cellRes.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0] as any)?.note ?? ''
+  let restoreBg: RgbColor | null = null
+  try {
+    if (cellNote) {
+      const parsed = JSON.parse(cellNote)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      restoreBg = (parsed as any).bg ?? parsed  // 新形式: {bg, school} / 旧形式: RgbColor直接
+    }
+  } catch { /* ignore */ }
+
   await sheets.spreadsheets.values.update({
     spreadsheetId,
-    range: `2026!${colIndexToLetter(colIndex)}${rowIndex + 1}`,
+    range: cellRange,
     valueInputOption: 'USER_ENTERED',
     requestBody: { values: [['']] },
   })
-  const sheetId = await getSheetId(spreadsheetId, '2026')
-  await clearCellBackground(sheets, spreadsheetId, sheetId, rowIndex, colIndex)
+
+  // 元の背景色に戻し、メモを削除（元色がない場合は背景は変更しない）
+  await updateCellColorAndNote(spreadsheetId, sheetId, rowIndex, colIndex, restoreBg, '')
 }
 
 export async function isSlotBooked(spreadsheetId: string, dateStr: string, slot: string): Promise<string | null> {

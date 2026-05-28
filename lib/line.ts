@@ -1,7 +1,8 @@
 export async function sendLineNotification(message: string): Promise<void> {
   const token = process.env.LINE_CHANNEL_ACCESS_TOKEN
-  const userId = process.env.LINE_USER_ID
-  if (!token || !userId) return
+  // グループIDがあればグループへ、なければ個人IDへ送信
+  const to = process.env.LINE_GROUP_ID || process.env.LINE_USER_ID
+  if (!token || !to) return
 
   await fetch('https://api.line.me/v2/bot/message/push', {
     method: 'POST',
@@ -10,7 +11,7 @@ export async function sendLineNotification(message: string): Promise<void> {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      to: userId,
+      to,
       messages: [{ type: 'text', text: message }],
     }),
   })
