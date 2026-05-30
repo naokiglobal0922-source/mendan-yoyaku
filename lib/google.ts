@@ -305,8 +305,10 @@ export async function findBookingsByName(spreadsheetId: string, name: string): P
     for (const [slot, cellValue] of Object.entries(slots)) {
       const nameMatch = cellValue.match(/^(.+?)（/)
       const typeMatch = APP_BOOKING_RE.exec(cellValue)
-      if (nameMatch && typeMatch && normName(nameMatch[1]) === normalizedTarget) {
-        results.push({ date, dayOfWeek, slot, type: typeMatch[1] })
+      if (nameMatch && normName(nameMatch[1]) === normalizedTarget) {
+        results.push({ date, dayOfWeek, slot, type: typeMatch ? typeMatch[1] : '' })
+      } else if (!nameMatch && normName(cellValue.trim()) === normalizedTarget) {
+        results.push({ date, dayOfWeek, slot, type: '' })
       }
     }
   }

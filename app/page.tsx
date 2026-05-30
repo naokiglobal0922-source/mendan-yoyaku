@@ -420,9 +420,15 @@ function BookingPage({
     try {
       const res = await fetch(`/api/bookings/lookup?name=${encodeURIComponent(name)}&teacher=${teacherId}`)
       const data = await res.json()
-      setCheckResult(data.bookings || [])
+      if (!res.ok) {
+        setCheckActionResult({ ok: false, message: `検索エラー: ${data.error || '不明なエラー'}` })
+        setCheckResult(null)
+      } else {
+        setCheckResult(data.bookings || [])
+      }
     } catch {
-      setCheckResult([])
+      setCheckActionResult({ ok: false, message: '通信エラーが発生しました' })
+      setCheckResult(null)
     } finally {
       setCheckLoading(false)
     }
