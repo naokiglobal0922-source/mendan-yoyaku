@@ -298,11 +298,14 @@ export async function findBookingsByName(spreadsheetId: string, name: string): P
   const bookings = await getBookings(spreadsheetId)
   const results: { date: string; dayOfWeek: string; slot: string; type: string }[] = []
 
+  const normName = (s: string) => s.replace(/[\s　]/g, '')
+  const normalizedTarget = normName(name)
+
   for (const { date, dayOfWeek, slots } of bookings) {
     for (const [slot, cellValue] of Object.entries(slots)) {
       const nameMatch = cellValue.match(/^(.+?)（/)
       const typeMatch = APP_BOOKING_RE.exec(cellValue)
-      if (nameMatch && typeMatch && nameMatch[1] === name) {
+      if (nameMatch && typeMatch && normName(nameMatch[1]) === normalizedTarget) {
         results.push({ date, dayOfWeek, slot, type: typeMatch[1] })
       }
     }

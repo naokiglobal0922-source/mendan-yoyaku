@@ -51,6 +51,8 @@ interface SlotStatus {
   booked: string | null
 }
 
+const normalizeName = (s: string) => s.replace(/[\s　]/g, '')
+
 function extractName(cellValue: string): string {
   const m = cellValue.match(/^(.+?)（/)
   return m ? m[1] : cellValue
@@ -302,7 +304,7 @@ function BookingPage({
     const name = verifyName.trim()
     if (!name) { setVerifyError('名前を入力してください'); return }
     const found = slots.find(s =>
-      s.booked && APP_BOOKING_RE.test(s.booked) && extractName(s.booked) === name
+      s.booked && APP_BOOKING_RE.test(s.booked) && normalizeName(extractName(s.booked)) === normalizeName(name)
     )
     if (!found) {
       setVerifyError('その名前の予約が見つかりませんでした。フルネームで入力してください')
@@ -593,9 +595,10 @@ function BookingPage({
                 </div>
 
                 {formMode === 'none' && (
-                  <p className="text-xs text-gray-400 text-center pt-1">
-                    変更・キャンセルはページ下部の「予約の確認・変更・キャンセル」から行えます
-                  </p>
+                  <div className="mt-2 bg-gray-50 rounded-xl px-4 py-3 border border-gray-100 text-center">
+                    <p className="text-xs text-gray-500 font-medium mb-1">予約済みの方</p>
+                    <p className="text-xs text-gray-400">変更・キャンセルは下の「予約の確認・変更・キャンセル」欄にお名前を入力してください</p>
+                  </div>
                 )}
               </>
             )}
@@ -766,22 +769,26 @@ function BookingPage({
         ) : null}
 
         {/* 予約の確認・変更・キャンセル */}
-        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-0.5">予約の確認・変更・キャンセル</h2>
-          <p className="text-xs text-gray-400 mb-3">お子様のフルネームを入力してください</p>
+        <section id="check-section" className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue-500 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 7v4M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+            <h2 className="text-sm font-bold text-blue-800">予約の確認・変更・キャンセル</h2>
+          </div>
+          <p className="text-xs text-blue-600 mb-1">予約時に入力したお子様のフルネームを入力してください</p>
+          <p className="text-xs text-blue-400 mb-3">※ スペースの有無に関わらず検索できます</p>
           <div className="flex gap-2 mb-3">
             <input
               type="text"
               value={checkName}
               onChange={e => { setCheckName(e.target.value); setCheckResult(null); setCheckActionResult(null) }}
               onKeyDown={e => e.key === 'Enter' && handleCheckBooking()}
-              placeholder="例：山田 太郎"
-              className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
+              placeholder="例：山田太郎"
+              className="flex-1 border border-blue-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
             />
             <button
               onClick={handleCheckBooking}
               disabled={checkLoading || !checkName.trim()}
-              className="bg-gray-800 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
+              className="bg-blue-600 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
             >
               {checkLoading ? '...' : '検索'}
             </button>
@@ -793,7 +800,11 @@ function BookingPage({
           )}
           {checkResult !== null && (
             checkResult.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-3">予約が見つかりませんでした。フルネームで入力してください</p>
+              <div className="text-center py-3">
+                <p className="text-sm text-gray-500 font-medium">予約が見つかりませんでした</p>
+                <p className="text-xs text-gray-400 mt-1">予約時に入力したお名前をフルネームで入力してください</p>
+                <p className="text-xs text-gray-400">（例：山田太郎、山田 太郎 どちらでも可）</p>
+              </div>
             ) : (
               <div className="space-y-3">
                 {checkResult.map((b, i) => (
