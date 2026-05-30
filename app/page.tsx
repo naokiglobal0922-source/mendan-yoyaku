@@ -266,12 +266,20 @@ function BookingPage({
     }
   }, [slots, formMode, selectedSlot])
 
-  // 初期表示: 今週の最初の予約可能日を自動選択
+  // 初期表示: 今週の最初の予約可能日を自動選択（今週に未来日がない場合は来週へ）
   useEffect(() => {
     if (autoSelectedRef.current) return
     autoSelectedRef.current = true
     const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-    const first = weekDates.find(d => new Date(d.getFullYear(), d.getMonth(), d.getDate()) > todayMidnight)
+    let first = weekDates.find(d => new Date(d.getFullYear(), d.getMonth(), d.getDate()) > todayMidnight)
+    if (!first) {
+      // 今週に予約可能日なし（土曜など週末）→ 来週の先頭を選択
+      const nextBase = new Date(today)
+      nextBase.setDate(today.getDate() + 7)
+      const nextWeek = getWeekDates(nextBase, weekStartDay)
+      first = nextWeek[0]
+      setWeekOffset(1)
+    }
     if (first) handleSelectDate(first)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

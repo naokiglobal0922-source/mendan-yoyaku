@@ -239,16 +239,17 @@ export async function getBookings(spreadsheetId: string): Promise<{
   slots: Record<string, string>
 }[]> {
   const sheets = await getSheetsClient()
-  const [res, sheetInfo] = await Promise.all([
-    sheets.spreadsheets.values.get({ spreadsheetId, range: '2026!A:AM' }),
+  const [sheetInfo, res] = await Promise.all([
     getSheetInfo(spreadsheetId),
+    sheets.spreadsheets.values.get({ spreadsheetId, range: '2026' }),
   ])
   const rows = res.data.values || []
   if (rows.length === 0) return []
 
-  const headers = rows[0]
-  const { isFutagami, dayOfWeekCol } = sheetInfo
-  const timeStartCol = isFutagami ? 3 : 2
+  const { colMap, isFutagami, dayOfWeekCol } = sheetInfo
+  // colMap から時間列のみ抽出（ヘッダーが HH:MM 形式のもの）
+  const timeSlotCols = Object.entries(colMap).filter(([h]) => /^\d{1,2}:\d{2}$/.test(h))
+
   const result = []
   let currentMonth = 0
 
@@ -279,9 +280,9 @@ export async function getBookings(spreadsheetId: string): Promise<{
     }
 
     const slots: Record<string, string> = {}
-    for (let j = timeStartCol; j < headers.length; j++) {
-      const timeHeader = headers[j]
-      if (timeHeader && row[j]) slots[timeHeader] = row[j]
+    for (const [header, colIdx] of timeSlotCols) {
+      const val = row[colIdx]
+      if (val) slots[header] = val as string
     }
     result.push({ date: dateStr, dayOfWeek: row[dayOfWeekCol] || '', slots })
   }
@@ -303,11 +304,13 @@ export async function findBookingsByName(spreadsheetId: string, name: string): P
 
   for (const { date, dayOfWeek, slots } of bookings) {
     for (const [slot, cellValue] of Object.entries(slots)) {
-      const nameMatch = cellValue.match(/^(.+?)（/)
+      // 全角・半角どちらの括弧でも名前を抽出
+      const nameMatch = cellValue.match(/^(.+?)[（(]/)
       const typeMatch = APP_BOOKING_RE.exec(cellValue)
       if (nameMatch && normName(nameMatch[1]) === normalizedTarget) {
         results.push({ date, dayOfWeek, slot, type: typeMatch ? typeMatch[1] : '' })
       } else if (!nameMatch && normName(cellValue.trim()) === normalizedTarget) {
+        // 括弧なし（名前のみ手動入力）
         results.push({ date, dayOfWeek, slot, type: '' })
       }
     }
