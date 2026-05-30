@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { SCHOOLS, TEACHERS, getTeachersBySchool, type SchoolId } from '@/lib/teachers'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
@@ -210,6 +210,8 @@ function BookingPage({
 
   const [hasSaturdaySlots, setHasSaturdaySlots] = useState(false)
 
+  const autoSelectedRef = useRef(false)
+
   const baseDate = new Date(today)
   baseDate.setDate(today.getDate() + weekOffset * 7)
   const weekDates = getWeekDates(baseDate, weekStartDay)
@@ -263,6 +265,16 @@ function BookingPage({
       }
     }
   }, [slots, formMode, selectedSlot])
+
+  // 初期表示: 今週の最初の予約可能日を自動選択
+  useEffect(() => {
+    if (autoSelectedRef.current) return
+    autoSelectedRef.current = true
+    const todayMidnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const first = weekDates.find(d => new Date(d.getFullYear(), d.getMonth(), d.getDate()) > todayMidnight)
+    if (first) handleSelectDate(first)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const resetForm = (skipReload = false) => {
     const wasEditing = editingOldSlot !== null
@@ -502,6 +514,96 @@ function BookingPage({
       </header>
 
       <main className="max-w-lg mx-auto px-4 py-6 space-y-6">
+
+        {/* 変更モードガイド（変更中のみ表示） */}
+        {formMode === 'edit' && (
+          <section className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2">
+                <span className="bg-orange-400 text-white text-xs font-bold px-2.5 py-1 rounded-full">変更中</span>
+                <span className="text-sm font-bold text-orange-800">
+                  {selectedDate ? formatDateDisplay(selectedDate) : ''} {editingOldSlot}
+                </span>
+              </div>
+              <button onClick={() => resetForm()} className="text-xs text-orange-500 underline">
+                やめる
+              </button>
+            </div>
+            <p className="text-sm text-orange-700">
+              下のカレンダーで変更先の日付を選び、空き枠をタップしてください
+            </p>
+          </section>
+        )}
+
+        {/* 予約の確認・変更・キャンセル（変更中は非表示） */}
+        {formMode !== 'edit' && (
+          <section id="check-section" className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue-500 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 7v4M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+              <h2 className="text-sm font-bold text-blue-800">予約の確認・変更・キャンセル</h2>
+            </div>
+            <p className="text-xs text-blue-600 mb-1">予約時に入力したお子様のフルネームを入力してください</p>
+            <p className="text-xs text-blue-400 mb-3">※ スペースの有無に関わらず検索できます</p>
+            <div className="flex gap-2 mb-3">
+              <input
+                type="text"
+                value={checkName}
+                onChange={e => { setCheckName(e.target.value); setCheckResult(null); setCheckActionResult(null) }}
+                onKeyDown={e => e.key === 'Enter' && handleCheckBooking()}
+                placeholder="例：山田太郎"
+                className="flex-1 border border-blue-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              />
+              <button
+                onClick={handleCheckBooking}
+                disabled={checkLoading || !checkName.trim()}
+                className="bg-blue-600 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
+              >
+                {checkLoading ? '...' : '検索'}
+              </button>
+            </div>
+            {checkActionResult && (
+              <div className={`rounded-xl px-4 py-3 text-sm font-medium mb-2 ${checkActionResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
+                {checkActionResult.message}
+              </div>
+            )}
+            {checkResult !== null && (
+              checkResult.length === 0 ? (
+                <div className="text-center py-3">
+                  <p className="text-sm text-gray-500 font-medium">予約が見つかりませんでした</p>
+                  <p className="text-xs text-gray-400 mt-1">予約時に入力したお名前をフルネームで入力してください</p>
+                  <p className="text-xs text-gray-400">（例：山田太郎、山田 太郎 どちらでも可）</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {checkResult.map((b, i) => (
+                    <div key={i} className="bg-white rounded-xl px-4 py-3 border border-blue-200">
+                      <p className="text-xs text-blue-500 font-semibold mb-1">予約済み</p>
+                      <p className="text-sm font-bold text-gray-900">{b.date}（{b.dayOfWeek}）{b.slot}</p>
+                      {b.type && <p className="text-xs text-gray-500 mt-0.5">{b.type}</p>}
+                      <div className="mt-3 space-y-2">
+                        <button
+                          onClick={() => handleChangeFromLookup(b)}
+                          disabled={checkCancelling}
+                          className="w-full py-3 bg-blue-600 text-white text-sm font-bold rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
+                        >
+                          別の時間に変更する
+                        </button>
+                        <button
+                          onClick={() => handleCancelFromLookup(b)}
+                          disabled={checkCancelling}
+                          className="w-full py-2.5 border-2 border-red-200 text-red-500 text-sm font-bold rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all"
+                        >
+                          {checkCancelling ? '処理中...' : 'キャンセルする'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </section>
+        )}
+
         {/* 週ナビゲーション */}
         <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-4">
@@ -603,7 +705,7 @@ function BookingPage({
                 {formMode === 'none' && (
                   <div className="mt-2 bg-gray-50 rounded-xl px-4 py-3 border border-gray-100 text-center">
                     <p className="text-xs text-gray-500 font-medium mb-1">予約済みの方</p>
-                    <p className="text-xs text-gray-400">変更・キャンセルは下の「予約の確認・変更・キャンセル」欄にお名前を入力してください</p>
+                    <p className="text-xs text-gray-400">変更・キャンセルは上の「予約の確認・変更・キャンセル」欄にお名前を入力してください</p>
                   </div>
                 )}
               </>
@@ -774,71 +876,6 @@ function BookingPage({
           </section>
         ) : null}
 
-        {/* 予約の確認・変更・キャンセル */}
-        <section id="check-section" className="bg-blue-50 rounded-2xl border border-blue-100 p-4">
-          <div className="flex items-center gap-2 mb-1">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-blue-500 flex-shrink-0"><circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5"/><path d="M8 7v4M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-            <h2 className="text-sm font-bold text-blue-800">予約の確認・変更・キャンセル</h2>
-          </div>
-          <p className="text-xs text-blue-600 mb-1">予約時に入力したお子様のフルネームを入力してください</p>
-          <p className="text-xs text-blue-400 mb-3">※ スペースの有無に関わらず検索できます</p>
-          <div className="flex gap-2 mb-3">
-            <input
-              type="text"
-              value={checkName}
-              onChange={e => { setCheckName(e.target.value); setCheckResult(null); setCheckActionResult(null) }}
-              onKeyDown={e => e.key === 'Enter' && handleCheckBooking()}
-              placeholder="例：山田太郎"
-              className="flex-1 border border-blue-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            />
-            <button
-              onClick={handleCheckBooking}
-              disabled={checkLoading || !checkName.trim()}
-              className="bg-blue-600 text-white font-bold px-5 rounded-xl text-sm disabled:opacity-40"
-            >
-              {checkLoading ? '...' : '検索'}
-            </button>
-          </div>
-          {checkActionResult && (
-            <div className={`rounded-xl px-4 py-3 text-sm font-medium mb-2 ${checkActionResult.ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
-              {checkActionResult.message}
-            </div>
-          )}
-          {checkResult !== null && (
-            checkResult.length === 0 ? (
-              <div className="text-center py-3">
-                <p className="text-sm text-gray-500 font-medium">予約が見つかりませんでした</p>
-                <p className="text-xs text-gray-400 mt-1">予約時に入力したお名前をフルネームで入力してください</p>
-                <p className="text-xs text-gray-400">（例：山田太郎、山田 太郎 どちらでも可）</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {checkResult.map((b, i) => (
-                  <div key={i} className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-100">
-                    <p className="text-sm font-bold text-gray-900">{b.date}（{b.dayOfWeek}）{b.slot}</p>
-                    <p className="text-xs text-gray-500 mt-0.5 mb-3">{b.type}</p>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => handleChangeFromLookup(b)}
-                        disabled={checkCancelling}
-                        className="flex-1 py-2 bg-blue-600 text-white text-sm font-bold rounded-xl disabled:opacity-40"
-                      >
-                        時間を変更する
-                      </button>
-                      <button
-                        onClick={() => handleCancelFromLookup(b)}
-                        disabled={checkCancelling}
-                        className="flex-1 py-2 border-2 border-red-200 text-red-500 text-sm font-bold rounded-xl disabled:opacity-40"
-                      >
-                        {checkCancelling ? '処理中...' : 'キャンセルする'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          )}
-        </section>
       </main>
     </div>
   )
