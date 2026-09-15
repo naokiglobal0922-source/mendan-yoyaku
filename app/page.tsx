@@ -660,28 +660,29 @@ function BookingPage({
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-2 mb-4">
-                  {slots.filter(({ slot, booked }) => {
+                  {slots.filter(({ slot }) => {
                     // 変更モード中は変更元スロットも表示
                     if (formMode === 'edit' && slot === editingOldSlot) return true
-                    // 過去時間は非表示
-                    if (!booked) {
-                      const isToday = selectedDate?.toDateString() === today.toDateString()
-                      if (isToday) {
-                        const [h, m] = slot.split(':').map(Number)
-                        if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) return false
-                      }
+                    // 過去時間は非表示（予約不可の表示も含め、今日より前の時間は出さない）
+                    const isToday = selectedDate?.toDateString() === today.toDateString()
+                    if (isToday) {
+                      const [h, m] = slot.split(':').map(Number)
+                      if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) return false
                     }
-                    // 予約可能（空き）のみ表示
-                    return booked === null
-                  }).map(({ slot }) => {
-                    const isMoveDest = formMode === 'edit' && slot !== editingOldSlot
+                    return true
+                  }).map(({ slot, booked }) => {
                     const isCurrentEdit = formMode === 'edit' && slot === editingOldSlot
+                    const isAvailable = booked === null
+                    const isUnavailable = !isAvailable && !isCurrentEdit
+                    const isMoveDest = formMode === 'edit' && slot !== editingOldSlot && isAvailable
                     const isNewSelected = formMode === 'new' && selectedSlot === slot
                     const isMoveSelected = formMode === 'edit' && selectedSlot === slot && slot !== editingOldSlot
 
                     return (
                       <button key={slot}
+                        disabled={isUnavailable}
                         onClick={() => {
+                          if (isUnavailable) return
                           if (formMode === 'edit' && !isCurrentEdit) {
                             setSelectedSlot(slot)
                           } else if (formMode !== 'edit') {
@@ -699,11 +700,16 @@ function BookingPage({
                               ? 'bg-blue-50 text-blue-600 ring-1 ring-blue-200 active:scale-95'
                               : isNewSelected
                               ? 'bg-blue-600 text-white shadow-md'
+                              : isUnavailable
+                              ? 'bg-gray-50 text-gray-300 cursor-not-allowed'
                               : 'bg-blue-50 text-blue-700 active:scale-95 hover:bg-blue-100'
                         }`}>
                         {slot}
                         {isMoveDest && !isMoveSelected ? (
                           <span className="block text-[9px] mt-0.5 text-blue-400">移動先</span>
+                        ) : null}
+                        {isUnavailable ? (
+                          <span className="block text-[9px] mt-0.5 text-gray-300">予約不可</span>
                         ) : null}
                       </button>
                     )
