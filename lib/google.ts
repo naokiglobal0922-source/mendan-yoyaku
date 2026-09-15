@@ -344,7 +344,7 @@ export async function getSlotStatusForDate(
     getSheetInfo(spreadsheetId),
     findDateRow(spreadsheetId, dateStr),
   ])
-  const { colMap, dayOfWeekCol } = sheetInfo
+  const { colMap } = sheetInfo
 
   if (rowIndex < 0) return []
 
@@ -354,7 +354,57 @@ export async function getSlotStatusForDate(
     ranges: [`2026!A${rowIndex + 1}:${lastCol}${rowIndex + 1}`],
     includeGridData: true,
   })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cells = res.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values || []
+
+  return computeDaySlots(cells, sheetInfo, { excludeSlot, schoolId, teacherId, debug })
+}
+
+// 複数日の「空き枠が1つでもあるか」をまとめて取得（週表示用。API呼び出しを日数分繰り返さないための一括版）
+export async function getWeekAvailability(
+  spreadsheetId: string,
+  dateStrs: string[],
+  schoolId?: string,
+  teacherId?: string
+): Promise<Record<string, boolean>> {
+  const result: Record<string, boolean> = {}
+  dateStrs.forEach(d => { result[d] = false })
+
+  const sheets = await getSheetsClient()
+  const [sheetInfo, rowMap] = await Promise.all([
+    getSheetInfo(spreadsheetId),
+    findDateRows(spreadsheetId, dateStrs),
+  ])
+  const { colMap } = sheetInfo
+  const validDates = dateStrs.filter(d => (rowMap[d] ?? -1) >= 0)
+  if (validDates.length === 0) return result
+
+  const lastCol = colIndexToLetter(Object.keys(colMap).length + 2)
+  const ranges = validDates.map(d => `2026!A${rowMap[d] + 1}:${lastCol}${rowMap[d] + 1}`)
+  const res = await sheets.spreadsheets.get({
+    spreadsheetId,
+    ranges,
+    includeGridData: true,
+  })
+
+  validDates.forEach((d, i) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const cells = res.data.sheets?.[0]?.data?.[i]?.rowData?.[0]?.values || []
+    const slots = computeDaySlots(cells, sheetInfo, { schoolId, teacherId })
+    result[d] = slots.some(s => s.booked === null)
+  })
+
+  return result
+}
+
+function computeDaySlots(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cells: any[],
+  sheetInfo: SheetInfo,
+  opts: { excludeSlot?: string; schoolId?: string; teacherId?: string; debug?: boolean }
+): { slot: string; booked: string | null; _debug?: unknown }[] {
+  const { excludeSlot, schoolId, teacherId, debug } = opts
+  const { colMap, dayOfWeekCol } = sheetInfo
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dateCellBg = (cells[0] as any)?.effectiveFormat?.backgroundColor
@@ -553,9 +603,19 @@ async function getColumnMap(spreadsheetId: string): Promise<Record<string, numbe
 }
 
 async function findDateRow(spreadsheetId: string, dateStr: string): Promise<number> {
-  const sheets = await getSheetsClient()
-  const [targetMonth, targetDay] = dateStr.split('/').map(Number)
+  const rows = await findDateRows(spreadsheetId, [dateStr])
+  return rows[dateStr] ?? -1
+}
 
+// 複数日の行番号を1回のAPI呼び出しでまとめて取得
+async function findDateRows(spreadsheetId: string, dateStrs: string[]): Promise<Record<string, number>> {
+  const result: Record<string, number> = {}
+  const targets = dateStrs.map(dateStr => {
+    const [month, day] = dateStr.split('/').map(Number)
+    return { key: dateStr, month, day }
+  })
+
+  const sheets = await getSheetsClient()
   // Read A:B to support futagami format (month in A, day in B)
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -581,20 +641,27 @@ async function findDateRow(spreadsheetId: string, dateStr: string): Promise<numb
     if (isFutagami) {
       if (a && !isNaN(Number(a)) && Number(a) > 0) currentMonth = Number(a)
       const d = Number(b)
-      if (!isNaN(d) && d > 0 && currentMonth === targetMonth && d === targetDay) return i
+      if (!isNaN(d) && d > 0) {
+        const match = targets.find(t => t.month === currentMonth && t.day === d)
+        if (match && result[match.key] === undefined) result[match.key] = i
+      }
     } else {
       if (!a) continue
       if (a.includes('/')) {
         const [m, d] = a.split('/').map(Number)
         currentMonth = m
-        if (m === targetMonth && d === targetDay) return i
+        const match = targets.find(t => t.month === m && t.day === d)
+        if (match && result[match.key] === undefined) result[match.key] = i
       } else {
         const d = Number(a)
-        if (!isNaN(d) && currentMonth === targetMonth && d === targetDay) return i
+        if (!isNaN(d) && currentMonth > 0) {
+          const match = targets.find(t => t.month === currentMonth && t.day === d)
+          if (match && result[match.key] === undefined) result[match.key] = i
+        }
       }
     }
   }
-  return -1
+  return result
 }
 
 function colIndexToLetter(index: number): string {

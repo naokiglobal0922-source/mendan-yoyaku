@@ -209,6 +209,7 @@ function BookingPage({
   const [checkCancelling, setCheckCancelling] = useState(false)
 
   const [hasSaturdaySlots, setHasSaturdaySlots] = useState(false)
+  const [weekAvailability, setWeekAvailability] = useState<Record<string, boolean>>({})
 
   const autoSelectedRef = useRef(false)
 
@@ -233,18 +234,23 @@ function BookingPage({
     }
   }, [teacherId, schoolId])
 
-  // 土曜日に空き枠があるか事前チェック
+  // 週内の各日に空き枠があるか事前チェック（日付をタップしなくても分かるように。1回のAPI呼び出しでまとめて取得）
   useEffect(() => {
-    const saturday = weekDates[5]
-    const satStr = formatDateForSheet(saturday)
+    let cancelled = false
     setHasSaturdaySlots(false)
-    fetch(`/api/bookings?date=${encodeURIComponent(satStr)}&teacher=${teacherId}&school=${schoolId}`)
+    const dateStrs = weekDates.map(formatDateForSheet)
+    fetch(`/api/bookings/week?dates=${encodeURIComponent(dateStrs.join(','))}&teacher=${teacherId}&school=${schoolId}`)
       .then(r => r.json())
       .then(data => {
-        const available = (data.slots as SlotStatus[] ?? []).some(s => s.booked === null)
-        setHasSaturdaySlots(available && !blockedDates.includes(satStr))
+        if (cancelled) return
+        const map: Record<string, boolean> = data.availability || {}
+        setWeekAvailability(map)
+        const satStr = formatDateForSheet(weekDates[5])
+        setHasSaturdaySlots((map[satStr] ?? false) && !blockedDates.includes(satStr))
       })
       .catch(() => {})
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weekOffset, teacherId, schoolId, blockedDates])
 
   // 20秒ごとにサイレント再取得してリアルタイム反映
@@ -631,6 +637,7 @@ function BookingPage({
               const isBlocked = blockedDates.includes(formatDateForSheet(date))
               const isDisabled = isPast || isBlocked
               const isSelected = selectedDate?.toDateString() === date.toDateString()
+              const isAvailable = !isDisabled && weekAvailability[formatDateForSheet(date)] === true
               return (
                 <button key={date.toISOString()} disabled={isDisabled} onClick={() => handleSelectDate(date)}
                   className={`flex flex-col items-center py-3 rounded-xl transition-all ${
@@ -639,6 +646,9 @@ function BookingPage({
                     : 'bg-gray-50 text-gray-700 active:scale-95 hover:bg-gray-100'}`}>
                   <span className="text-[11px] font-medium">{DAYS_JP[date.getDay()]}</span>
                   <span className="text-lg font-bold mt-1">{date.getDate()}</span>
+                  <span className={`text-[9px] mt-0.5 font-semibold ${isSelected ? 'text-blue-100' : 'text-blue-500'}`}>
+                    {isAvailable ? '空きあり' : ' '}
+                  </span>
                 </button>
               )
             })}
