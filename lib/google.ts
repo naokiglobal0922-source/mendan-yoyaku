@@ -461,6 +461,15 @@ function computeDaySlots(
     .filter(h => /^\d{1,2}:\d{2}$/.test(h))
     .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
 
+  // ２者面談・３者面談（電話面談を除く）は対応に1時間程度かかる想定のため、
+  // 通常バッファ（30分/60分）の代わりに、予約開始から75分は次の予約を不可にする
+  const faceToFaceBuffer = (val: string, fallback: number): number => {
+    const typeMatch = APP_BOOKING_RE.exec(val)
+    const meetingType = typeMatch ? typeMatch[1] : ''
+    const isFaceToFace = meetingType !== '' && meetingType !== '電話面談'
+    return isFaceToFace ? 75 : fallback
+  }
+
   // 予約済み一覧（バッファ計算用）
   const occupied: { mins: number; buffer: number }[] = []
   allSlots.forEach(header => {
@@ -490,23 +499,23 @@ function computeDaySlots(
         : (!origGreen  && (schoolId === 'tsuruse'  ? origYellow : schoolId === 'fujimino' ? origCyan : false))
 
       if (origOtherSchool) {
-        occupied.push({ mins: timeToMinutes(header), buffer: 60 })
+        occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, 60) })
         return
       }
       if (origBothSchools) {
         const bookingSchool = extractSchoolFromCellValue(val)
-        occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? 30 : 60 })
+        occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, bookingSchool === schoolId ? 30 : 60) })
         return
       }
       // 同校舎セル or 元色不明（origBg=null）→ セル値の校舎ラベルで判定、なければ保守的に60分
       const bookingSchool = extractSchoolFromCellValue(val)
-      occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? 30 : 60 })
+      occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, bookingSchool === schoolId ? 30 : 60) })
       return
     }
 
     // futagami/okamiya 以外、または手動入力
     if (isOtherSchoolCell(idx) && isAppBooking) return  // 他校アプリ予約は除外
-    occupied.push({ mins: timeToMinutes(header), buffer: 30 })
+    occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, 30) })
   })
 
   return allSlots.map(slot => {
