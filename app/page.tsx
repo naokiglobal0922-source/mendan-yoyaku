@@ -657,6 +657,19 @@ function BookingPage({
               </div>
             ) : slots.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-6">データを取得できませんでした</p>
+            ) : formMode !== 'edit' && !slots.some(s => {
+              if (s.booked !== null) return false
+              const isToday = selectedDate?.toDateString() === today.toDateString()
+              if (isToday) {
+                const [h, m] = s.slot.split(':').map(Number)
+                if (h * 60 + m <= today.getHours() * 60 + today.getMinutes()) return false
+              }
+              return true
+            }) ? (
+              <div className="text-center py-8">
+                <p className="text-sm font-bold text-gray-500">この日程は予約できません</p>
+                <p className="text-xs text-gray-400 mt-1">空き枠がないため予約を受け付けていません。別の日をお選びください</p>
+              </div>
             ) : (
               <>
                 <div className="grid grid-cols-4 gap-2 mb-4">
