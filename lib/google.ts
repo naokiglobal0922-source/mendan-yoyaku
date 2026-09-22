@@ -571,7 +571,9 @@ function computeDaySlots(
 
     const slotMins = timeToMinutes(slot)
 
-    const conflictsAhead = occupied.some(({ mins: t, buffer }) => slotMins < t && t < slotMins + buffer)
+    // 直後に別の予定が入っている場合、最短でもその45分前までしか予約できない
+    const MIN_BUFFER_BEFORE_NEXT = 45
+    const conflictsAhead = occupied.some(({ mins: t, buffer }) => slotMins < t && t < slotMins + Math.max(buffer, MIN_BUFFER_BEFORE_NEXT))
     if (conflictsAhead) return { slot, booked: '__blocked__', _debug: debugInfo }
 
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
