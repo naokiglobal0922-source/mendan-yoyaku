@@ -14,8 +14,8 @@ export const TEACHERS = [
 
 export type TeacherId = typeof TEACHERS[number]['id']
 
-// エイメイ/明成個別の高等部の生徒が相談できる先生（塾長のみ）
-export const KOUTOUBU_TEACHER_IDS: TeacherId[] = ['haraguchi', 'futagami']
+// エイメイ/明成個別の高等部の生徒が相談できる先生
+export const KOUTOUBU_TEACHER_IDS: TeacherId[] = ['haraguchi', 'futagami', 'okamiya']
 
 const SCHOOL_TEACHER_ORDER: Record<string, string[]> = {
   fujimino: ['futagami', 'okamiya'],
