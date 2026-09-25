@@ -2,6 +2,22 @@ import { google } from 'googleapis'
 
 const APP_BOOKING_RE = /（(２者面談（保護者のみ）|[２2]者面談|[３3]者面談（生徒本人も参加）|三者面談（生徒本人も参加）|電話面談)）/
 
+// Google Sheets APIのクォータ（1分あたりの読み取り回数）を節約するための簡易キャッシュ。
+// 更新頻度の低いメタデータ（列構成・日付の行番号・面談不可日）だけを対象にし、
+// 予約の空き状況そのもの（実際のセル値）は二重予約防止のため常に最新を取得する。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type CacheEntry<T> = { promise: Promise<T>; expires: number }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const apiCache = new Map<string, CacheEntry<any>>()
+
+function cached<T>(key: string, ttlMs: number, fetcher: () => Promise<T>): Promise<T> {
+  const hit = apiCache.get(key) as CacheEntry<T> | undefined
+  if (hit && hit.expires > Date.now()) return hit.promise
+  const promise = fetcher().catch(err => { apiCache.delete(key); throw err })
+  apiCache.set(key, { promise, expires: Date.now() + ttlMs })
+  return promise
+}
+
 const SCHOOL_SHORT: Record<string, string> = {
   tsuruse: '鶴瀬',
   fujimino: 'ふじみ野',
@@ -182,54 +198,56 @@ function isYellowBackground(color?: { red?: number; green?: number; blue?: numbe
 
 // 面談不可日の取得
 export async function getBlockedDates(spreadsheetId: string): Promise<string[]> {
-  try {
-    const sheets = await getSheetsClient()
-    const [res, sheetInfo] = await Promise.all([
-      sheets.spreadsheets.get({ spreadsheetId, ranges: ['2026!A:B'], includeGridData: true }),
-      getSheetInfo(spreadsheetId),
-    ])
-    const rowData = res.data.sheets?.[0]?.data?.[0]?.rowData || []
-    const blocked: string[] = []
-    let currentMonth = 0
+  return cached(`blockedDates:${spreadsheetId}`, 3 * 60 * 1000, async () => {
+    try {
+      const sheets = await getSheetsClient()
+      const [res, sheetInfo] = await Promise.all([
+        sheets.spreadsheets.get({ spreadsheetId, ranges: ['2026!A:B'], includeGridData: true }),
+        getSheetInfo(spreadsheetId),
+      ])
+      const rowData = res.data.sheets?.[0]?.data?.[0]?.rowData || []
+      const blocked: string[] = []
+      let currentMonth = 0
 
-    rowData.forEach((row, i) => {
-      if (i === 0) return
-      const cellA = row.values?.[0]
-      const cellB = row.values?.[1]
-      if (!cellA && !cellB) return
+      rowData.forEach((row, i) => {
+        if (i === 0) return
+        const cellA = row.values?.[0]
+        const cellB = row.values?.[1]
+        if (!cellA && !cellB) return
 
-      const aVal = (cellA?.formattedValue || '').trim()
-      const bVal = (cellB?.formattedValue || '').trim()
+        const aVal = (cellA?.formattedValue || '').trim()
+        const bVal = (cellB?.formattedValue || '').trim()
 
-      if (sheetInfo.isFutagami) {
-        if (aVal && !isNaN(Number(aVal)) && Number(aVal) > 0) currentMonth = Number(aVal)
-        if (!bVal) return
-        const d = Number(bVal)
-        if (isNaN(d) || d <= 0 || currentMonth <= 0) return
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
-        blocked.push(`${currentMonth}/${d}`)
-      } else {
-        if (!aVal) return
-        if (aVal.includes('/')) {
-          const [m] = aVal.split('/').map(Number)
-          currentMonth = m
-        }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
-        if (aVal.includes('/')) {
-          blocked.push(aVal)
+        if (sheetInfo.isFutagami) {
+          if (aVal && !isNaN(Number(aVal)) && Number(aVal) > 0) currentMonth = Number(aVal)
+          if (!bVal) return
+          const d = Number(bVal)
+          if (isNaN(d) || d <= 0 || currentMonth <= 0) return
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
+          blocked.push(`${currentMonth}/${d}`)
         } else {
-          const d = Number(aVal)
-          if (!isNaN(d) && currentMonth > 0) blocked.push(`${currentMonth}/${d}`)
+          if (!aVal) return
+          if (aVal.includes('/')) {
+            const [m] = aVal.split('/').map(Number)
+            currentMonth = m
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          if (!isGreyBackground(cellA?.effectiveFormat?.backgroundColor as any)) return
+          if (aVal.includes('/')) {
+            blocked.push(aVal)
+          } else {
+            const d = Number(aVal)
+            if (!isNaN(d) && currentMonth > 0) blocked.push(`${currentMonth}/${d}`)
+          }
         }
-      }
-    })
+      })
 
-    return blocked
-  } catch {
-    return []
-  }
+      return blocked
+    } catch {
+      return []
+    }
+  })
 }
 
 // 「2026」シートの予約状況を取得
@@ -589,23 +607,25 @@ interface SheetInfo {
   isFutagami: boolean
 }
 
-async function getSheetInfo(spreadsheetId: string): Promise<SheetInfo> {
-  const sheets = await getSheetsClient()
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: '2026!1:1',
+function getSheetInfo(spreadsheetId: string): Promise<SheetInfo> {
+  return cached(`sheetInfo:${spreadsheetId}`, 5 * 60 * 1000, async () => {
+    const sheets = await getSheetsClient()
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: '2026!1:1',
+    })
+    const headers = (res.data.values || [[]])[0]
+
+    // Futagami format: header[1] is "2026" (year), so time slots start at col D (index 3)
+    const isFutagami = /^\d{4}$/.test((headers[1] || '').toString().trim())
+
+    const colMap: Record<string, number> = {}
+    headers.forEach((h: string, i: number) => {
+      if (h) colMap[h] = i
+    })
+
+    return { colMap, dayOfWeekCol: isFutagami ? 2 : 1, isFutagami }
   })
-  const headers = (res.data.values || [[]])[0]
-
-  // Futagami format: header[1] is "2026" (year), so time slots start at col D (index 3)
-  const isFutagami = /^\d{4}$/.test((headers[1] || '').toString().trim())
-
-  const colMap: Record<string, number> = {}
-  headers.forEach((h: string, i: number) => {
-    if (h) colMap[h] = i
-  })
-
-  return { colMap, dayOfWeekCol: isFutagami ? 2 : 1, isFutagami }
 }
 
 // Keep backward-compat wrapper
@@ -618,6 +638,19 @@ async function findDateRow(spreadsheetId: string, dateStr: string): Promise<numb
   return rows[dateStr] ?? -1
 }
 
+// 日付→行番号の対応表のもとになる生データ。日付構成はほぼ変化しないため短時間キャッシュする
+function getDateRowsRaw(spreadsheetId: string): Promise<string[][]> {
+  return cached(`dateRowsRaw:${spreadsheetId}`, 2 * 60 * 1000, async () => {
+    const sheets = await getSheetsClient()
+    // Read A:B to support futagami format (month in A, day in B)
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: '2026!A:B',
+    })
+    return (res.data.values || []) as string[][]
+  })
+}
+
 // 複数日の行番号を1回のAPI呼び出しでまとめて取得
 async function findDateRows(spreadsheetId: string, dateStrs: string[]): Promise<Record<string, number>> {
   const result: Record<string, number> = {}
@@ -626,13 +659,7 @@ async function findDateRows(spreadsheetId: string, dateStrs: string[]): Promise<
     return { key: dateStr, month, day }
   })
 
-  const sheets = await getSheetsClient()
-  // Read A:B to support futagami format (month in A, day in B)
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: '2026!A:B',
-  })
-  const rows = res.data.values || []
+  const rows = await getDateRowsRaw(spreadsheetId)
 
   // Detect format: futagami has a numeric value in col B of data rows
   let isFutagami = false
