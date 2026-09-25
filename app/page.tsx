@@ -1,7 +1,12 @@
 "use client"
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { SCHOOLS, TEACHERS, getTeachersBySchool, type SchoolId } from '@/lib/teachers'
+import {
+  SCHOOLS, TEACHERS, getTeachersBySchool, type SchoolId,
+  KOUTOUBU_TEACHER_IDS, KOUTOUBU_SCHOOLS, KOUTOUBU_GRADES, KOUTOUBU_EXAM_TYPES,
+} from '@/lib/teachers'
+
+type Audience = 'eimei' | 'koutoubu' | 'shinki'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
 const MEETING_TYPES: Record<string, string[]> = {
@@ -61,8 +66,8 @@ function extractType(cellValue: string): string {
   const m = cellValue.match(APP_BOOKING_RE)
   return m ? m[1] : MEETING_TYPES.default[0]
 }
-function extractTopicsFromCell(cellValue: string): string[] {
-  const m = cellValue.match(/【話したいこと】([^\n]*)/)
+function extractTopicsFromCell(cellValue: string, key: string = '話したいこと'): string[] {
+  const m = cellValue.match(new RegExp(`【${key}】([^\\n]*)`))
   if (!m) return []
   return m[1].split('、').map(s => s.trim()).filter(Boolean)
 }
@@ -76,8 +81,10 @@ function extractRelationFromCell(cellValue: string): string {
 
 type FormMode = 'none' | 'new' | 'verify' | 'edit'
 
-// ── 校舎選択画面 ──────────────────────────────────────
-function SchoolSelect({ onSelect }: { onSelect: (id: SchoolId) => void }) {
+const teacherLabel = (t: { name: string; title?: string }) => t.title ? `${t.name}（${t.title}）` : t.name
+
+// ── 対象者選択画面 ──────────────────────────────────────
+function AudienceSelect({ onSelect }: { onSelect: (a: Audience) => void }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-100">
@@ -89,9 +96,54 @@ function SchoolSelect({ onSelect }: { onSelect: (id: SchoolId) => void }) {
         </div>
       </header>
       <main className="max-w-lg mx-auto px-4 py-10">
+        <p className="text-sm font-semibold text-gray-600 mb-5">あてはまるものを選択してください</p>
+        <div className="space-y-3">
+          <button
+            onClick={() => onSelect('eimei')}
+            className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
+          >
+            <p className="text-base font-bold text-gray-900">EIMEI予備校にお通いの方</p>
+          </button>
+          <button
+            onClick={() => onSelect('koutoubu')}
+            className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
+          >
+            <p className="text-base font-bold text-gray-900">エイメイ/明成個別の高等部にお通いの方</p>
+            <p className="text-xs text-gray-400 mt-1">EIMEI予備校の先生に進路のご相談ができます</p>
+          </button>
+          <button
+            onClick={() => onSelect('shinki')}
+            className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
+          >
+            <p className="text-base font-bold text-gray-900">新規で説明をご希望の方</p>
+          </button>
+        </div>
+      </main>
+    </div>
+  )
+}
+
+// ── 校舎選択画面 ──────────────────────────────────────
+function SchoolSelect({ audience, onSelect, onBack }: { audience: Audience; onSelect: (id: SchoolId) => void; onBack: () => void }) {
+  const teacherIds = audience === 'koutoubu' ? KOUTOUBU_TEACHER_IDS : undefined
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white border-b border-gray-100">
+        <div className="max-w-lg mx-auto px-4 py-4">
+          <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 bg-gray-100 hover:bg-gray-200 active:scale-95 rounded-full px-3 py-1.5 mb-3 transition-all">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11L5 7l4-4"/></svg>
+            戻る
+          </button>
+          <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
+          <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
+            EIMEI予備校面談予約システム
+          </h1>
+        </div>
+      </header>
+      <main className="max-w-lg mx-auto px-4 py-10">
         <p className="text-sm font-semibold text-gray-600 mb-5">校舎を選択してください</p>
         <div className="space-y-3">
-          {SCHOOLS.map(school => (
+          {SCHOOLS.filter(school => getTeachersBySchool(school.id, teacherIds).length > 0).map(school => (
             <button
               key={school.id}
               onClick={() => onSelect(school.id)}
@@ -99,7 +151,7 @@ function SchoolSelect({ onSelect }: { onSelect: (id: SchoolId) => void }) {
             >
               <p className="text-base font-bold text-gray-900">{school.name}</p>
               <p className="text-xs text-gray-400 mt-1">
-                {getTeachersBySchool(school.id).map(t => t.name).join('・')}
+                {getTeachersBySchool(school.id, teacherIds).map(teacherLabel).join('・')}
               </p>
             </button>
           ))}
@@ -112,15 +164,18 @@ function SchoolSelect({ onSelect }: { onSelect: (id: SchoolId) => void }) {
 // ── 先生選択画面 ──────────────────────────────────────
 function TeacherSelect({
   schoolId,
+  audience,
   onSelect,
   onBack,
 }: {
   schoolId: SchoolId
+  audience: Audience
   onSelect: (id: string) => void
   onBack: () => void
 }) {
   const school = SCHOOLS.find(s => s.id === schoolId)!
-  const teachers = getTeachersBySchool(schoolId)
+  const teacherIds = audience === 'koutoubu' ? KOUTOUBU_TEACHER_IDS : undefined
+  const teachers = getTeachersBySchool(schoolId, teacherIds)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -145,7 +200,7 @@ function TeacherSelect({
               onClick={() => onSelect(teacher.id)}
               className="w-full bg-white border border-gray-200 rounded-2xl px-6 py-5 text-left shadow-sm hover:border-blue-300 hover:shadow-md active:scale-[0.99] transition-all"
             >
-              <p className="text-base font-bold text-gray-900">{teacher.name} 先生</p>
+              <p className="text-base font-bold text-gray-900">{teacherLabel(teacher)} 先生</p>
               <p className="text-xs text-gray-400 mt-1">
                 {(teacher.schools as readonly SchoolId[]).map(sid => SCHOOLS.find(s => s.id === sid)?.name).join('・')}
               </p>
@@ -159,16 +214,20 @@ function TeacherSelect({
 
 // ── 予約メイン画面 ────────────────────────────────────
 function BookingPage({
+  audience,
   teacherId,
   schoolId,
   teacherName,
+  teacherTitle,
   schoolName,
   weekStartDay,
   onBack,
 }: {
+  audience: Audience
   teacherId: string
   schoolId: string
   teacherName: string
+  teacherTitle?: string
   schoolName: string
   weekStartDay: number
   onBack: () => void
@@ -199,6 +258,14 @@ function BookingPage({
   const [selectedTopics, setSelectedTopics] = useState<string[]>([])
   const [note, setNote] = useState('')
   const [chatNote, setChatNote] = useState('')
+  // 高等部（エイメイ/明成個別）専用フィールド
+  const [grade, setGrade] = useState('')
+  const [attendingSchool, setAttendingSchool] = useState('')
+  const [examType, setExamType] = useState('')
+  const [desiredSchool, setDesiredSchool] = useState('')
+  const [consultDetail, setConsultDetail] = useState('')
+  // 新規説明希望 専用フィールド
+  const [contact, setContact] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
 
@@ -304,6 +371,12 @@ function BookingPage({
     setSelectedTopics([])
     setNote('')
     setChatNote('')
+    setGrade('')
+    setAttendingSchool('')
+    setExamType('')
+    setDesiredSchool('')
+    setConsultDetail('')
+    setContact('')
     setResult(null)
     if (!skipReload && wasEditing && selectedDate) loadSlots(selectedDate)
   }
@@ -317,14 +390,33 @@ function BookingPage({
   const toggleTopic = (t: string) =>
     setSelectedTopics(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])
 
-  const buildNoteText = () =>
-    [
+  const buildNoteText = () => {
+    if (audience === 'koutoubu') {
+      return [
+        grade ? `【学年】${grade}` : '',
+        attendingSchool ? `【通っている校舎】${attendingSchool}` : '',
+        examType ? `【試験方式】${examType}` : '',
+        desiredSchool ? `【志望校】${desiredSchool}` : '',
+        meetingType === '電話面談' && phoneNumber ? `【電話番号】${phoneNumber}` : '',
+        selectedTopics.length ? `【相談したいこと】${selectedTopics.join('、')}` : '',
+        consultDetail ? `【相談内容】${consultDetail}` : '',
+      ].filter(Boolean).join('\n')
+    }
+    if (audience === 'shinki') {
+      return [
+        contact ? `【連絡先】${contact}` : '',
+        meetingType === '電話面談' && phoneNumber ? `【電話番号】${phoneNumber}` : '',
+        note ? `【備考】${note}` : '',
+      ].filter(Boolean).join('\n')
+    }
+    return [
       relation ? `【本人との関係】${relation}` : '',
       meetingType === '電話面談' && phoneNumber ? `【電話番号】${phoneNumber}` : '',
       selectedTopics.length ? `【話したいこと】${selectedTopics.join('、')}` : '',
       note ? `【備考】${note}` : '',
       chatNote ? `【雑談】${chatNote}` : '',
     ].filter(Boolean).join('\n')
+  }
 
   const handleVerify = () => {
     const name = verifyName.trim()
@@ -340,11 +432,24 @@ function BookingPage({
     setEditingOldSlot(oldSlot)
     setSelectedSlot(oldSlot)
     setStudentName(extractName(found.booked!))
-    setRelation(extractRelationFromCell(found.booked!))
     setMeetingType(extractType(found.booked!))
-    setSelectedTopics(extractTopicsFromCell(found.booked!))
-    setNote(extractNoteFromCell(found.booked!, '備考'))
-    setChatNote(extractNoteFromCell(found.booked!, '雑談'))
+    setPhoneNumber(extractNoteFromCell(found.booked!, '電話番号'))
+    if (audience === 'koutoubu') {
+      setGrade(extractNoteFromCell(found.booked!, '学年'))
+      setAttendingSchool(extractNoteFromCell(found.booked!, '通っている校舎'))
+      setExamType(extractNoteFromCell(found.booked!, '試験方式'))
+      setDesiredSchool(extractNoteFromCell(found.booked!, '志望校'))
+      setSelectedTopics(extractTopicsFromCell(found.booked!, '相談したいこと'))
+      setConsultDetail(extractNoteFromCell(found.booked!, '相談内容'))
+    } else if (audience === 'shinki') {
+      setContact(extractNoteFromCell(found.booked!, '連絡先'))
+      setNote(extractNoteFromCell(found.booked!, '備考'))
+    } else {
+      setRelation(extractRelationFromCell(found.booked!))
+      setSelectedTopics(extractTopicsFromCell(found.booked!))
+      setNote(extractNoteFromCell(found.booked!, '備考'))
+      setChatNote(extractNoteFromCell(found.booked!, '雑談'))
+    }
     setVerifyError('')
     setFormMode('edit')
     if (selectedDate) loadSlots(selectedDate, oldSlot)
@@ -502,12 +607,23 @@ function BookingPage({
     setNote('')
     setChatNote('')
     setRelation('')
+    setGrade('')
+    setAttendingSchool('')
+    setExamType('')
+    setDesiredSchool('')
+    setConsultDetail('')
+    setContact('')
     setFormMode('edit')
     setCheckResult(null)
     setCheckActionResult(null)
     await loadSlots(targetDate, booking.slot)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  const isFormInvalid = !studentName
+    || (meetingType === '電話面談' && !phoneNumber)
+    || (audience === 'koutoubu' && (!grade || !attendingSchool || !examType))
+    || (audience === 'shinki' && !contact)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -520,7 +636,7 @@ function BookingPage({
           <p className="text-[10px] font-medium tracking-[0.3em] text-gray-400 uppercase mb-0.5">Interview Reservation</p>
           <div className="flex items-baseline gap-2">
             <h1 className="text-[22px] font-bold text-gray-900 leading-tight" style={{ fontFamily: 'var(--font-serif-jp), serif' }}>
-              {teacherName} 先生
+              {teacherName}{teacherTitle ? `（${teacherTitle}）` : ''} 先生
             </h1>
             <span className="text-xs text-gray-400">{schoolName}</span>
           </div>
@@ -803,12 +919,61 @@ function BookingPage({
                   className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1.5">本人との関係</label>
-                <input type="text" value={relation} onChange={e => setRelation(e.target.value)}
-                  placeholder="例：保護者（母）、本人"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
-              </div>
+              {audience === 'eimei' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">本人との関係</label>
+                  <input type="text" value={relation} onChange={e => setRelation(e.target.value)}
+                    placeholder="例：保護者（母）、本人"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                </div>
+              )}
+
+              {audience === 'koutoubu' && (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1.5">学年 *</label>
+                    <select value={grade} onChange={e => setGrade(e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                      <option value="">選択してください</option>
+                      {KOUTOUBU_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1.5">通っている校舎 *</label>
+                    <select value={attendingSchool} onChange={e => setAttendingSchool(e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                      <option value="">選択してください</option>
+                      {KOUTOUBU_SCHOOLS.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1.5">試験方式 *</label>
+                    <select value={examType} onChange={e => setExamType(e.target.value)}
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50">
+                      <option value="">選択してください</option>
+                      {KOUTOUBU_EXAM_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1.5">志望校 <span className="font-normal text-gray-400">（未定も可）</span></label>
+                    <input type="text" value={desiredSchool} onChange={e => setDesiredSchool(e.target.value)}
+                      placeholder="例：〇〇大学、未定"
+                      className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                  </div>
+                </>
+              )}
+
+              {audience === 'shinki' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">連絡先 * <span className="font-normal text-gray-400">（電話番号・メールなど）</span></label>
+                  <input type="text" value={contact} onChange={e => setContact(e.target.value)}
+                    placeholder="例：090-1234-5678"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50" />
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1.5">面談希望 * <span className="font-normal text-gray-400">（所要時間：15分程度）</span></label>
@@ -832,47 +997,64 @@ function BookingPage({
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-2">
-                  話したいこと <span className="font-normal text-gray-400">（当てはまるものを選択）</span>
-                </label>
-                <div className="space-y-1">
-                  {TOPICS.map(topic => {
-                    const checked = selectedTopics.includes(topic)
-                    return (
-                      <button key={topic} type="button" onClick={() => toggleTopic(topic)}
-                        className="flex items-center gap-3 w-full text-left py-1.5 active:opacity-60">
-                        <span className={`w-5 h-5 flex-shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
-                          checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
-                        }`}>
-                          {checked && (
-                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M1 4L3.5 7L9 1" />
-                            </svg>
-                          )}
-                        </span>
-                        <span className="text-sm text-gray-700">{topic}</span>
-                      </button>
-                    )
-                  })}
+              {audience !== 'shinki' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-2">
+                    {audience === 'koutoubu' ? '相談したいこと' : '話したいこと'} <span className="font-normal text-gray-400">（当てはまるものを選択）</span>
+                  </label>
+                  <div className="space-y-1">
+                    {TOPICS.map(topic => {
+                      const checked = selectedTopics.includes(topic)
+                      return (
+                        <button key={topic} type="button" onClick={() => toggleTopic(topic)}
+                          className="flex items-center gap-3 w-full text-left py-1.5 active:opacity-60">
+                          <span className={`w-5 h-5 flex-shrink-0 rounded border-2 flex items-center justify-center transition-colors ${
+                            checked ? 'bg-blue-600 border-blue-600' : 'border-gray-300 bg-white'
+                          }`}>
+                            {checked && (
+                              <svg width="10" height="8" viewBox="0 0 10 8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M1 4L3.5 7L9 1" />
+                              </svg>
+                            )}
+                          </span>
+                          <span className="text-sm text-gray-700">{topic}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1.5">備考（任意）</label>
-                <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
-                  placeholder="具体的な状況や詳細があればご記入ください"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none" />
-              </div>
+              {audience === 'koutoubu' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                    相談したいこと（記述欄） <span className="font-normal text-gray-400">（任意）</span>
+                  </label>
+                  <textarea value={consultDetail} onChange={e => setConsultDetail(e.target.value)} rows={3}
+                    placeholder="具体的な状況や詳細があればご記入ください"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none" />
+                </div>
+              )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1.5">
-                  雑談・なんでもどうぞ <span className="font-normal text-gray-400">（任意）</span>
-                </label>
-                <textarea value={chatNote} onChange={e => setChatNote(e.target.value)} rows={3}
-                  placeholder="悩みでも、ちょっとした疑問でも、気軽にどうぞ"
-                  className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none" />
-              </div>
+              {audience !== 'koutoubu' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">備考（任意）</label>
+                  <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+                    placeholder={audience === 'shinki' ? 'ご希望の説明内容などあればご記入ください' : '具体的な状況や詳細があればご記入ください'}
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none" />
+                </div>
+              )}
+
+              {audience === 'eimei' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                    雑談・なんでもどうぞ <span className="font-normal text-gray-400">（任意）</span>
+                  </label>
+                  <textarea value={chatNote} onChange={e => setChatNote(e.target.value)} rows={3}
+                    placeholder="悩みでも、ちょっとした疑問でも、気軽にどうぞ"
+                    className="w-full border border-gray-200 rounded-xl px-4 py-3 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50 resize-none" />
+                </div>
+              )}
 
               {result && (
                 <div className={`rounded-xl px-4 py-3 text-sm font-medium ${
@@ -883,14 +1065,14 @@ function BookingPage({
 
               {formMode === 'new' ? (
                 <button onClick={handleSubmitNew}
-                  disabled={!studentName || submitting || (meetingType === '電話面談' && !phoneNumber)}
+                  disabled={isFormInvalid || submitting}
                   className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all">
                   {submitting ? '送信中...' : '予約を確定する'}
                 </button>
               ) : (
                 <div className="space-y-2">
                   <button onClick={handleSubmitEdit}
-                    disabled={!studentName || submitting || (meetingType === '電話面談' && !phoneNumber)}
+                    disabled={isFormInvalid || submitting}
                     className="w-full bg-blue-600 text-white font-bold py-4 rounded-xl disabled:opacity-40 active:scale-[0.99] transition-all">
                     {submitting ? '送信中...' : '変更を保存する'}
                   </button>
@@ -914,17 +1096,23 @@ function BookingPage({
 
 // ── ルートコンポーネント ───────────────────────────────
 export default function HomePage() {
+  const [audience, setAudience] = useState<Audience | null>(null)
   const [schoolId, setSchoolId] = useState<SchoolId | null>(null)
   const [teacherId, setTeacherId] = useState<string | null>(null)
 
+  if (!audience) {
+    return <AudienceSelect onSelect={setAudience} />
+  }
+
   if (!schoolId) {
-    return <SchoolSelect onSelect={setSchoolId} />
+    return <SchoolSelect audience={audience} onSelect={setSchoolId} onBack={() => setAudience(null)} />
   }
 
   if (!teacherId) {
     return (
       <TeacherSelect
         schoolId={schoolId}
+        audience={audience}
         onSelect={setTeacherId}
         onBack={() => setSchoolId(null)}
       />
@@ -936,9 +1124,11 @@ export default function HomePage() {
 
   return (
     <BookingPage
+      audience={audience}
       teacherId={teacherId}
       schoolId={schoolId}
       teacherName={teacher.name}
+      teacherTitle={teacher.title}
       schoolName={school.name}
       weekStartDay={teacher.weekStartDay}
       onBack={() => setTeacherId(null)}

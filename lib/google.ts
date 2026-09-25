@@ -760,7 +760,8 @@ export async function writeBooking(
   slot: string,
   studentName: string,
   meetingType: string,
-  schoolId?: string
+  schoolId?: string,
+  note?: string
 ): Promise<void> {
   const sheets = await getSheetsClient()
   const [colMap, rowIndex] = await Promise.all([
@@ -782,9 +783,10 @@ export async function writeBooking(
   const originalBg: RgbColor = (cellRes.data.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0] as any)?.effectiveFormat?.backgroundColor ?? {}
 
   const schoolLabel = schoolId ? SCHOOL_SHORT[schoolId] : null
-  const cellValue = schoolLabel
+  const baseValue = schoolLabel
     ? `${studentName}（${meetingType}）[${schoolLabel}]`
     : `${studentName}（${meetingType}）`
+  const cellValue = note ? `${baseValue}\n${note}` : baseValue
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
