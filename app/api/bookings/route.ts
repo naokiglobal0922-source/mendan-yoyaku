@@ -10,6 +10,12 @@ const SCHOOL_SHORT: Record<string, string> = {
 }
 const schoolLabel = (id?: string) => (id ? SCHOOL_SHORT[id] ?? id : '')
 const teacherName = (id?: string) => TEACHERS.find(t => t.id === id)?.name ?? id ?? ''
+const AUDIENCE_LABEL: Record<string, string> = {
+  eimei: '予備校生',
+  koutoubu: '高等部',
+  shinki: '新規',
+}
+const audienceLabel = (id?: string) => (id ? AUDIENCE_LABEL[id] ?? id : '')
 
 export async function GET(request: NextRequest) {
   const date = request.nextUrl.searchParams.get('date')
@@ -32,7 +38,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { teacherId, schoolId, date, slot, studentName, type, note } = body
+    const { teacherId, schoolId, audience, date, slot, studentName, type, note } = body
 
     if (!teacherId || !date || !slot || !studentName || !type) {
       return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
@@ -47,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     await writeBooking(spreadsheetId, date, slot, studentName, type, schoolId, note)
 
-    const msg = `【面談予約】\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName}\n日時: ${date} ${slot}\n種別: ${type}${note ? `\n${note}` : ''}`
+    const msg = `【面談予約】\n区分: ${audienceLabel(audience)}\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName}\n日時: ${date} ${slot}\n種別: ${type}${note ? `\n${note}` : ''}`
     await sendLineNotification(msg)
 
     return NextResponse.json({ success: true })
@@ -59,7 +65,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json()
-    const { teacherId, schoolId, date, oldSlot, newSlot, studentName, type, note } = body
+    const { teacherId, schoolId, audience, date, oldSlot, newSlot, studentName, type, note } = body
 
     if (!teacherId || !date || !oldSlot || !newSlot || !studentName || !type) {
       return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
@@ -78,7 +84,7 @@ export async function PUT(request: NextRequest) {
     await cancelBooking(spreadsheetId, date, oldSlot)
     await writeBooking(spreadsheetId, date, newSlot, studentName, type, schoolId, note)
 
-    const msg = `【面談予約変更】\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName}\n変更前: ${date} ${oldSlot}\n変更後: ${date} ${newSlot}\n種別: ${type}${note ? `\n${note}` : ''}`
+    const msg = `【面談予約変更】\n区分: ${audienceLabel(audience)}\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName}\n変更前: ${date} ${oldSlot}\n変更後: ${date} ${newSlot}\n種別: ${type}${note ? `\n${note}` : ''}`
     await sendLineNotification(msg)
 
     return NextResponse.json({ success: true })
@@ -90,7 +96,7 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json()
-    const { teacherId, schoolId, date, slot, studentName } = body
+    const { teacherId, schoolId, audience, date, slot, studentName } = body
 
     if (!teacherId || !date || !slot) {
       return NextResponse.json({ error: '必須項目が不足しています' }, { status: 400 })
@@ -99,7 +105,7 @@ export async function DELETE(request: NextRequest) {
     const spreadsheetId = getSpreadsheetId(teacherId)
     await cancelBooking(spreadsheetId, date, slot)
 
-    const msg = `【面談予約キャンセル】\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName || '不明'}\n日時: ${date} ${slot}`
+    const msg = `【面談予約キャンセル】\n区分: ${audienceLabel(audience)}\n先生: ${teacherName(teacherId)}\n校舎: ${schoolLabel(schoolId)}\n生徒名: ${studentName || '不明'}\n日時: ${date} ${slot}`
     await sendLineNotification(msg)
 
     return NextResponse.json({ success: true })

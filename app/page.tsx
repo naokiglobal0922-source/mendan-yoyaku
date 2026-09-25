@@ -10,11 +10,11 @@ type Audience = 'eimei' | 'koutoubu' | 'shinki'
 
 const DAYS_JP = ['日', '月', '火', '水', '木', '金', '土']
 const MEETING_TYPES: Record<string, string[]> = {
-  default: ['２者面談（保護者のみ）', '３者面談（生徒本人も参加）'],
-  futagami: ['２者面談（保護者のみ）', '３者面談（生徒本人も参加）', '電話面談'],
+  default: ['２者面談（保護者のみ）', '２者面談（生徒のみ）', '３者面談（生徒本人も参加）'],
+  futagami: ['２者面談（保護者のみ）', '２者面談（生徒のみ）', '３者面談（生徒本人も参加）', '電話面談'],
 }
 // スプレッドシートの既存表記との後方互換を含む判定用正規表現
-const APP_BOOKING_RE = /（(２者面談（保護者のみ）|[２2]者面談|[３3]者面談（生徒本人も参加）|三者面談（生徒本人も参加）|電話面談)）/
+const APP_BOOKING_RE = /（(２者面談（保護者のみ）|２者面談（生徒のみ）|[２2]者面談|[３3]者面談（生徒本人も参加）|三者面談（生徒本人も参加）|電話面談)）/
 
 const TOPICS = [
   '成績・学力のこと',
@@ -465,6 +465,7 @@ function BookingPage({
         body: JSON.stringify({
           teacherId,
           schoolId,
+          audience,
           date: formatDateForSheet(selectedDate),
           slot: selectedSlot,
           studentName,
@@ -494,6 +495,7 @@ function BookingPage({
         body: JSON.stringify({
           teacherId,
           schoolId,
+          audience,
           date: formatDateForSheet(selectedDate),
           oldSlot: editingOldSlot,
           newSlot: selectedSlot,
@@ -525,6 +527,7 @@ function BookingPage({
         body: JSON.stringify({
           teacherId,
           schoolId,
+          audience,
           date: formatDateForSheet(selectedDate),
           slot: editingOldSlot,
           studentName,
@@ -573,7 +576,7 @@ function BookingPage({
       const res = await fetch('/api/bookings', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ teacherId, schoolId, date: booking.date, slot: booking.slot, studentName: checkName.trim() }),
+        body: JSON.stringify({ teacherId, schoolId, audience, date: booking.date, slot: booking.slot, studentName: checkName.trim() }),
       })
       if (res.ok) {
         setCheckActionResult({ ok: true, message: '予約をキャンセルしました' })
