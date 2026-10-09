@@ -479,14 +479,9 @@ function computeDaySlots(
     .filter(h => /^\d{1,2}:\d{2}$/.test(h))
     .sort((a, b) => timeToMinutes(a) - timeToMinutes(b))
 
-  // ２者面談・３者面談（電話面談を除く）は対応に1時間程度かかる想定のため、
-  // 通常バッファ（30分/60分）の代わりに、予約開始から75分は次の予約を不可にする
-  const faceToFaceBuffer = (val: string, fallback: number): number => {
-    const typeMatch = APP_BOOKING_RE.exec(val)
-    const meetingType = typeMatch ? typeMatch[1] : ''
-    const isFaceToFace = meetingType !== '' && meetingType !== '電話面談'
-    return isFaceToFace ? 75 : fallback
-  }
+  // バッファ: 同校舎の予約は前後60分、別校舎の予約は移動時間を見込んで前後75分
+  const SAME_SCHOOL_BUFFER = 60
+  const OTHER_SCHOOL_BUFFER = 75
 
   // 予約済み一覧（バッファ計算用）
   const occupied: { mins: number; buffer: number }[] = []
@@ -517,23 +512,23 @@ function computeDaySlots(
         : (!origGreen  && (schoolId === 'tsuruse'  ? origYellow : schoolId === 'fujimino' ? origCyan : false))
 
       if (origOtherSchool) {
-        occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, 60) })
+        occupied.push({ mins: timeToMinutes(header), buffer: OTHER_SCHOOL_BUFFER })
         return
       }
       if (origBothSchools) {
         const bookingSchool = extractSchoolFromCellValue(val)
-        occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, bookingSchool === schoolId ? 30 : 60) })
+        occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? SAME_SCHOOL_BUFFER : OTHER_SCHOOL_BUFFER })
         return
       }
-      // 同校舎セル or 元色不明（origBg=null）→ セル値の校舎ラベルで判定、なければ保守的に60分
+      // 同校舎セル or 元色不明（origBg=null）→ セル値の校舎ラベルで判定、なければ保守的に別校舎扱い
       const bookingSchool = extractSchoolFromCellValue(val)
-      occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, bookingSchool === schoolId ? 30 : 60) })
+      occupied.push({ mins: timeToMinutes(header), buffer: bookingSchool === schoolId ? SAME_SCHOOL_BUFFER : OTHER_SCHOOL_BUFFER })
       return
     }
 
     // futagami/okamiya 以外、または手動入力
     if (isOtherSchoolCell(idx) && isAppBooking) return  // 他校アプリ予約は除外
-    occupied.push({ mins: timeToMinutes(header), buffer: faceToFaceBuffer(val, 30) })
+    occupied.push({ mins: timeToMinutes(header), buffer: SAME_SCHOOL_BUFFER })
   })
 
   return allSlots.map(slot => {
@@ -589,9 +584,8 @@ function computeDaySlots(
 
     const slotMins = timeToMinutes(slot)
 
-    // 直後に別の予定が入っている場合、最短でもその45分前までしか予約できない
-    const MIN_BUFFER_BEFORE_NEXT = 45
-    const conflictsAhead = occupied.some(({ mins: t, buffer }) => slotMins < t && t < slotMins + Math.max(buffer, MIN_BUFFER_BEFORE_NEXT))
+    // 直後に別の予定が入っている場合、その予定のバッファ分だけ前までしか予約できない
+    const conflictsAhead = occupied.some(({ mins: t, buffer }) => slotMins < t && t < slotMins + buffer)
     if (conflictsAhead) return { slot, booked: '__blocked__', _debug: debugInfo }
 
     const isBlocked = occupied.some(({ mins: t, buffer }) => t <= slotMins && slotMins < t + buffer)
